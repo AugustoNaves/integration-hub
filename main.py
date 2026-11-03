@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from pymongo import DESCENDING
 from pymongo.errors import DuplicateKeyError
@@ -23,6 +24,15 @@ app = FastAPI(
     title="Integration Hub",
     description="Hub de Integração e Consulta de Dados heterogêneos (MongoDB Atlas).",
     version="1.0.0",
+)
+
+# Habilita CORS para permitir conexões do frontend React (Vite: localhost:5173)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Nome de campo seguro para usar em "payload.<campo>" (evita operadores "$")

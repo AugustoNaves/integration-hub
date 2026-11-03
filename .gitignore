@@ -14,3 +14,8 @@ venv/
 Exemplo.zip
 exemplo_professor/
 Hub de Integração Universal.png
+
+# Node / React Frontend
+frontend/node_modules/
+frontend/dist/
+

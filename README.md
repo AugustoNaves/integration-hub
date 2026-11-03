@@ -87,12 +87,26 @@ load("database/seed.js")
 load("database/queries.js")
 ```
 
-### 4. Subir a API e a interface
-Em dois terminais (com o `.venv` ativado):
+### 4. Subir a API e o Frontend
+
+**Passo 1: Subir a API (Backend FastAPI)**
 ```bash
-uvicorn main:app --reload      # API → http://localhost:8000/docs
-streamlit run app.py           # Interface → http://localhost:8501
+uvicorn main:app --reload      # API REST → http://localhost:8000/docs
 ```
+
+**Passo 2: Escolha a Interface Visual:**
+
+* **Opção 1: Frontend Moderno em React + Vite (Recomendado)**
+  ```bash
+  cd frontend
+  npm install
+  npm run dev                  # Aplicação Web → http://localhost:5173
+  ```
+
+* **Opção 2: Frontend em Streamlit (Python puro)**
+  ```bash
+  streamlit run app.py         # Aplicação Streamlit → http://localhost:8501
+  ```
 
 ---
 
