@@ -73,12 +73,12 @@ st.markdown(
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08) !important;
       }
 
-      /* Botões com altura confortável para toque */
-      .stButton > button {
+      /* Botões com estilo limpo e proporcional */
+      .stButton > button, div[data-testid="stFormSubmitButton"] > button {
         border-radius: 8px !important;
         font-weight: 500 !important;
-        min-height: 44px !important;
-        transition: all 0.2s ease !important;
+        padding: 0.35rem 1.1rem !important;
+        transition: all 0.15s ease !important;
       }
 
       /* Tabelas e Dataframes responsivos com rolagem horizontal fluida */
@@ -230,7 +230,7 @@ with st.sidebar:
       novo_id = st.text_input("ID único (ex: helpdesk)", placeholder="ex: suporte")
       novo_nome = st.text_input("Nome da API", placeholder="ex: Suporte Zendesk")
       novo_desc = st.text_input("Descrição", placeholder="ex: Chamados de clientes")
-      if st.form_submit_button("Cadastrar Nova API"):
+      if st.form_submit_button("Cadastrar", type="primary"):
         if novo_id and novo_nome:
           _, post_err = api(
               "POST",
@@ -364,7 +364,6 @@ with tab_simulator:
     btn_send = st.button(
         f"🚀 Disparar evento de {meta['name']} para o MongoDB",
         type="primary",
-        use_container_width=True,
     )
 
     if btn_send:
