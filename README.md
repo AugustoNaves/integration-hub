@@ -51,44 +51,46 @@ Detalhes em [docs/database-architecture.md](docs/database-architecture.md).
 
 ---
 
-## 🛠️ Pré-requisitos (O que precisa ter instalado)
+## 🛠️ Pré-requisitos (O que você precisa ter instalado)
 
-Antes de começar, certifique-se de ter instalado na sua máquina:
+Para rodar o projeto na sua máquina, você só precisa de:
 1. **Python 3.9+** (com `pip` e módulo `venv`)
-2. **Node.js 18+ e npm** (necessário para rodar o frontend em React)
+2. **Node.js 18+ e npm** (para a interface web em React)
 3. **Git**
-4. **Cluster Gratuito no MongoDB Atlas** (M0)
+
+> 🌐 **Você NÃO precisa criar conta no MongoDB Atlas:** o banco de dados já está hospedado e ativo na nuvem, com as coleções criadas, índices configurados e documentos de demonstração já povoados. O acesso de rede (`Network Access`) já está liberado para conexões externas (`0.0.0.0/0`).
 
 ---
 
 ## 🔐 Variáveis de Ambiente (`.env`)
 
-O projeto utiliza um arquivo `.env` na raiz para guardar as credenciais de conexão sem expô-las no GitHub (o `.env` está protegido pelo `.gitignore`).
+O projeto já traz o modelo no `.env.example` apontando diretamente para o cluster do projeto na nuvem.
 
-Copie o arquivo de exemplo:
+Basta copiar o arquivo de exemplo para `.env`:
 ```bash
 cp .env.example .env
 ```
 
-Abra o arquivo `.env` e configure os valores:
+O arquivo `.env` ficará configurado assim:
 
-| Variável | Descrição | Exemplo de Valor |
-| :--- | :--- | :--- |
-| `MONGODB_URI` | Connection string do seu cluster MongoDB Atlas | `mongodb+srv://usuario:senha@cluster0.abcde.mongodb.net/` |
-| `MONGODB_DB` | Nome do banco de dados | `integration_hub` |
-| `API_URL` | URL base da API FastAPI | `http://localhost:8000` |
+```env
+# Cluster oficial do projeto (MongoDB Atlas)
+MONGODB_URI=mongodb+srv://augustonf05_db_user:<SENHA>@cluster0.hxa84ms.mongodb.net/?retryWrites=true&w=majority
+MONGODB_DB=integration_hub
 
-> 💡 **Como pegar a `MONGODB_URI` no MongoDB Atlas:**
-> 1. No painel do Atlas, clique em **Database** ➔ **Connect**.
-> 2. Escolha **Drivers** ➔ Driver **Python** (versão 3.12 ou mais recente).
-> 3. Copie a connection string e substitua `<password>` pela sua senha real.
-> 4. Em **Network Access**, certifique-se de que o acesso de IP está liberado (`0.0.0.0/0` para testes).
+# URL da API
+API_URL=http://localhost:8000
+```
+
+> 🔑 **Senha do banco:** substitua `<SENHA>` pela senha do banco de dados informada na entrega da disciplina (ou na documentação privada do grupo).
 
 ---
 
 ## 🚀 Como Executar Passo a Passo
 
-### 1. Clonar o repositório e preparar o ambiente Python
+Como o banco no MongoDB Atlas já está pronto e populado, basta rodar o backend e o frontend:
+
+### 1. Clonar o repositório e configurar o ambiente Python
 ```bash
 git clone https://github.com/AugustoNaves/integration-hub.git
 cd integration-hub
@@ -97,33 +99,22 @@ cd integration-hub
 python3 -m venv .venv
 source .venv/bin/activate    # No Windows: .venv\Scripts\activate
 
-# Instalar dependências do backend
+# Instalar dependências da API
 pip install -r requirements.txt
 
-# Configurar as variáveis de ambiente
+# Configurar o arquivo .env
 cp .env.example .env
-# (Edite o .env e insira a sua MONGODB_URI)
+# (Edite o .env e preencha a <SENHA> do cluster fornecida na entrega)
 ```
 
-### 2. Criar coleções, índices e popular o banco no MongoDB Atlas
-
-Você pode rodar o script automático em Python (não precisa ter o `mongosh` instalado):
-```bash
-python setup_db.py --seed
-```
-*(Opcional: para apagar tudo e recriar do zero a qualquer momento, use `python setup_db.py --reset`).*
-
-> **Se preferir usar o `mongosh` oficial:**
+> *(Opcional)*: Se quiser resetar ou recriar os dados de demonstração no banco a qualquer momento, basta rodar:
 > ```bash
-> mongosh "sua_connection_string"
-> load("database/init.js")
-> load("database/seed.js")
-> load("database/queries.js")
+> python setup_db.py --seed
 > ```
 
 ---
 
-### 3. Iniciar o Backend (API FastAPI)
+### 2. Iniciar a API (Backend FastAPI)
 
 Com o terminal na raiz do projeto e o `.venv` ativado:
 ```bash
@@ -134,7 +125,7 @@ uvicorn main:app --reload --port 8000
 
 ---
 
-### 4. Iniciar o Frontend (React + Vite)
+### 3. Iniciar o Frontend (React + Vite)
 
 Abra um **segundo terminal** para iniciar a interface visual em React:
 ```bash
