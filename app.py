@@ -28,6 +28,81 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------
+# Estilos CSS Responsivos e Modernos
+# ---------------------------------------------------------------------
+st.markdown(
+    """
+    <style>
+      /* Layout responsivo para telas menores (tablets e celulares) */
+      @media (max-width: 992px) {
+        [data-testid="column"] {
+          min-width: calc(50% - 1rem) !important;
+          flex: 1 1 calc(50% - 1rem) !important;
+          margin-bottom: 0.75rem;
+        }
+      }
+      @media (max-width: 640px) {
+        [data-testid="column"] {
+          min-width: 100% !important;
+          flex: 1 1 100% !important;
+          margin-bottom: 0.75rem;
+        }
+        .main .block-container {
+          padding-left: 1rem !important;
+          padding-right: 1rem !important;
+          padding-top: 1.5rem !important;
+        }
+        h1 {
+          font-size: 1.5rem !important;
+        }
+        h2 {
+          font-size: 1.25rem !important;
+        }
+        h3 {
+          font-size: 1.1rem !important;
+        }
+      }
+
+      /* Cartões com cantos arredondados e transição suave */
+      [data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 12px !important;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        background-color: rgba(255, 255, 255, 0.02);
+      }
+      [data-testid="stVerticalBlockBorderWrapper"]:hover {
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08) !important;
+      }
+
+      /* Botões com altura confortável para toque */
+      .stButton > button {
+        border-radius: 8px !important;
+        font-weight: 500 !important;
+        min-height: 44px !important;
+        transition: all 0.2s ease !important;
+      }
+
+      /* Tabelas e Dataframes responsivos com rolagem horizontal fluida */
+      [data-testid="stDataFrame"] {
+        border-radius: 8px !important;
+        overflow-x: auto !important;
+      }
+
+      /* Estilização para blocos de código e JSON */
+      pre, code {
+        border-radius: 8px !important;
+      }
+
+      /* Ajuste nas abas para navegação limpa em telas estreitas */
+      [data-testid="stTabs"] [role="tab"] {
+        padding: 8px 14px !important;
+        font-weight: 500 !important;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ---------------------------------------------------------------------
 # Metadados visuais dos 4 sistemas para facilitar o entendimento
 # ---------------------------------------------------------------------
 SYSTEM_META = {
