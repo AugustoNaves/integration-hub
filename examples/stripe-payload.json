@@ -1,0 +1,11 @@
+{
+  "source_id": "stripe",
+  "external_id": "evt_20001",
+  "payload": {
+    "customer": "Ana Souza",
+    "amount": 399.9,
+    "currency": "BRL",
+    "status": "paid",
+    "method": "credit_card"
+  }
+}

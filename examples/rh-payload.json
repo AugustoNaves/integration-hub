@@ -1,0 +1,14 @@
+{
+  "source_id": "rh_app",
+  "external_id": "candidate_2001",
+  "payload": {
+    "candidate": "Beatriz Lima",
+    "position": "Analista de Dados",
+    "salary_expectation": 6200,
+    "skills": ["Python", "SQL", "Power BI"],
+    "contact": {
+      "email": "beatriz@example.com",
+      "city": "Uberlândia"
+    }
+  }
+}

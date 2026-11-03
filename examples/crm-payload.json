@@ -1,0 +1,11 @@
+{
+  "source_id": "crm",
+  "external_id": "lead_2001",
+  "payload": {
+    "company": "Padaria Pão Quente",
+    "contact_name": "Roberto",
+    "stage": "negotiation",
+    "estimated_value": 12000,
+    "tags": ["varejo", "alimentos"]
+  }
+}

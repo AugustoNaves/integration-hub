@@ -1,0 +1,14 @@
+{
+  "source_id": "erp",
+  "external_id": "order_2001",
+  "payload": {
+    "order_number": 2001,
+    "client": "Mercado Bom Preço",
+    "items": [
+      { "sku": "ARZ-5KG", "description": "Arroz 5kg", "qty": 20, "unit_price": 27.5 },
+      { "sku": "FEJ-1KG", "description": "Feijão 1kg", "qty": 30, "unit_price": 8.9 }
+    ],
+    "total": 817.0,
+    "shipping": { "carrier": "Transportadora X", "eta_days": 3 }
+  }
+}

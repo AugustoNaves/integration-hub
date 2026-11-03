@@ -1,0 +1,16 @@
+# Credenciais — NUNCA versionar
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Material de referência local (não faz parte da entrega)
+Exemplo.zip
+exemplo_professor/
+Hub de Integração Universal.png
