@@ -36,8 +36,7 @@ sem exigir que todos os sistemas externos usem o mesmo formato.
 ├── db.py                          # Conexão com o Atlas (lê o .env)
 ├── setup_db.py                    # Script Python para criar banco, índices e dados (sem mongosh)
 ├── main.py                        # API REST FastAPI com suporte a CORS
-├── app.py                         # Interface alternativa em Streamlit (Python)
-├── requirements.txt               # Dependências Python
+├── requirements.txt               # Dependências Python do backend
 └── .env.example                   # Modelo de configuração das variáveis de ambiente
 ```
 
@@ -135,24 +134,15 @@ uvicorn main:app --reload --port 8000
 
 ---
 
-### 4. Iniciar o Frontend Visual
+### 4. Iniciar o Frontend (React + Vite)
 
-Abra um **segundo terminal** para iniciar a interface visual. Você tem duas opções:
-
-#### 🌟 Opção 1: Frontend em React + Vite (Recomendado)
+Abra um **segundo terminal** para iniciar a interface visual em React:
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 * Acesse no navegador: 👉 **http://localhost:5173**
-
-#### 🐍 Opção 2: Frontend em Streamlit (Python puro)
-```bash
-# Na raiz do projeto, com o .venv ativado:
-streamlit run app.py
-```
-* Acesse no navegador: 👉 **http://localhost:8501**
 
 ---
 
