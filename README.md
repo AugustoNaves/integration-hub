@@ -27,13 +27,18 @@ sem exigir que todos os sistemas externos usem o mesmo formato.
 │   ├── init.js                    # Cria banco, coleções e índices
 │   ├── seed.js                    # Insere fontes e documentos fictícios
 │   └── queries.js                 # 12 consultas de demonstração
-├── examples/                      # Payloads de exemplo de cada API
+├── examples/                      # Payloads de exemplo em JSON de cada API
+├── frontend/                      # Aplicação Web Moderna (React + Vite + Tailwind/CSS)
+│   ├── src/
+│   │   ├── App.jsx                # Interface com as 4 abas e chamadas à API
+│   │   └── index.css              # Estilos modernos e responsivos
+│   └── package.json
 ├── db.py                          # Conexão com o Atlas (lê o .env)
-├── setup_db.py                    # Equivalente Python de init.js + seed.js
-├── main.py                        # API FastAPI (recebimento e consultas)
-├── app.py                         # Interface Streamlit (demonstração)
-├── requirements.txt
-└── .env.example                   # Modelo de configuração (sem senha)
+├── setup_db.py                    # Script Python para criar banco, índices e dados (sem mongosh)
+├── main.py                        # API REST FastAPI com suporte a CORS
+├── app.py                         # Interface alternativa em Streamlit (Python)
+├── requirements.txt               # Dependências Python
+└── .env.example                   # Modelo de configuração das variáveis de ambiente
 ```
 
 ## 🗄️ Banco de dados
@@ -47,66 +52,107 @@ Detalhes em [docs/database-architecture.md](docs/database-architecture.md).
 
 ---
 
-## 🚀 Como executar
+## 🛠️ Pré-requisitos (O que precisa ter instalado)
 
-### 1. MongoDB Atlas
-1. Crie uma conta em [mongodb.com/atlas](https://www.mongodb.com/cloud/atlas) e um cluster gratuito **M0**.
-2. **Database Access:** crie um usuário com senha.
-3. **Network Access:** libere seu IP (ou `0.0.0.0/0` para testes).
-4. **Connect → Drivers → Python:** copie a connection string.
+Antes de começar, certifique-se de ter instalado na sua máquina:
+1. **Python 3.9+** (com `pip` e módulo `venv`)
+2. **Node.js 18+ e npm** (necessário para rodar o frontend em React)
+3. **Git**
+4. **Cluster Gratuito no MongoDB Atlas** (M0)
 
-> Não é preciso criar o banco nem as coleções pelo painel. Os scripts fazem isso.
+---
 
-### 2. Configuração local
+## 🔐 Variáveis de Ambiente (`.env`)
+
+O projeto utiliza um arquivo `.env` na raiz para guardar as credenciais de conexão sem expô-las no GitHub (o `.env` está protegido pelo `.gitignore`).
+
+Copie o arquivo de exemplo:
 ```bash
-git clone <url-do-repo> && cd <repo>
+cp .env.example .env
+```
+
+Abra o arquivo `.env` e configure os valores:
+
+| Variável | Descrição | Exemplo de Valor |
+| :--- | :--- | :--- |
+| `MONGODB_URI` | Connection string do seu cluster MongoDB Atlas | `mongodb+srv://usuario:senha@cluster0.abcde.mongodb.net/` |
+| `MONGODB_DB` | Nome do banco de dados | `integration_hub` |
+| `API_URL` | URL base da API FastAPI | `http://localhost:8000` |
+
+> 💡 **Como pegar a `MONGODB_URI` no MongoDB Atlas:**
+> 1. No painel do Atlas, clique em **Database** ➔ **Connect**.
+> 2. Escolha **Drivers** ➔ Driver **Python** (versão 3.12 ou mais recente).
+> 3. Copie a connection string e substitua `<password>` pela sua senha real.
+> 4. Em **Network Access**, certifique-se de que o acesso de IP está liberado (`0.0.0.0/0` para testes).
+
+---
+
+## 🚀 Como Executar Passo a Passo
+
+### 1. Clonar o repositório e preparar o ambiente Python
+```bash
+git clone https://github.com/AugustoNaves/integration-hub.git
+cd integration-hub
+
+# Criar e ativar o ambiente virtual Python
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate    # No Windows: .venv\Scripts\activate
+
+# Instalar dependências do backend
 pip install -r requirements.txt
 
-cp .env.example .env    # edite e cole sua connection string em MONGODB_URI
+# Configurar as variáveis de ambiente
+cp .env.example .env
+# (Edite o .env e insira a sua MONGODB_URI)
 ```
 
-> ⚠️ **Nunca** versione o `.env`. Ele já está no `.gitignore`.
+### 2. Criar coleções, índices e popular o banco no MongoDB Atlas
 
-### 3. Criar a estrutura e popular o banco
-
-**Opção A: Python (não precisa de mongosh)**
+Você pode rodar o script automático em Python (não precisa ter o `mongosh` instalado):
 ```bash
-python setup_db.py --seed      # cria coleções, índices e dados de demonstração
-python setup_db.py --reset     # (opcional) apaga tudo e recria
+python setup_db.py --seed
 ```
+*(Opcional: para apagar tudo e recriar do zero a qualquer momento, use `python setup_db.py --reset`).*
 
-**Opção B: mongosh**
+> **Se preferir usar o `mongosh` oficial:**
+> ```bash
+> mongosh "sua_connection_string"
+> load("database/init.js")
+> load("database/seed.js")
+> load("database/queries.js")
+> ```
+
+---
+
+### 3. Iniciar o Backend (API FastAPI)
+
+Com o terminal na raiz do projeto e o `.venv` ativado:
 ```bash
-mongosh "mongodb+srv://<cluster>.mongodb.net/" --username <usuario>
+uvicorn main:app --reload --port 8000
 ```
-```javascript
-load("database/init.js")
-load("database/seed.js")
-load("database/queries.js")
-```
+* **Status da API:** http://localhost:8000/
+* **Swagger/Documentação Interativa dos Endpoints:** http://localhost:8000/docs
 
-### 4. Subir a API e o Frontend
+---
 
-**Passo 1: Subir a API (Backend FastAPI)**
+### 4. Iniciar o Frontend Visual
+
+Abra um **segundo terminal** para iniciar a interface visual. Você tem duas opções:
+
+#### 🌟 Opção 1: Frontend em React + Vite (Recomendado)
 ```bash
-uvicorn main:app --reload      # API REST → http://localhost:8000/docs
+cd frontend
+npm install
+npm run dev
 ```
+* Acesse no navegador: 👉 **http://localhost:5173**
 
-**Passo 2: Escolha a Interface Visual:**
-
-* **Opção 1: Frontend Moderno em React + Vite (Recomendado)**
-  ```bash
-  cd frontend
-  npm install
-  npm run dev                  # Aplicação Web → http://localhost:5173
-  ```
-
-* **Opção 2: Frontend em Streamlit (Python puro)**
-  ```bash
-  streamlit run app.py         # Aplicação Streamlit → http://localhost:8501
-  ```
+#### 🐍 Opção 2: Frontend em Streamlit (Python puro)
+```bash
+# Na raiz do projeto, com o .venv ativado:
+streamlit run app.py
+```
+* Acesse no navegador: 👉 **http://localhost:8501**
 
 ---
 
