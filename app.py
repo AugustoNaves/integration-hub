@@ -1,11 +1,16 @@
 """Integration Hub — Interface de demonstração (Streamlit).
 
-Rodar (com a API já no ar):  streamlit run app.py
+Centraliza dados de 4 sistemas externos (Stripe, RH, CRM, ERP) em uma única
+coleção flexível no MongoDB Atlas (api_records).
+
+Rodar (com a API FastAPI no ar):
+  streamlit run app.py
 """
 
 import json
 import os
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 import pandas as pd
 import requests
@@ -16,17 +21,71 @@ load_dotenv()
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
 EXAMPLES_DIR = Path(__file__).parent / "examples"
 
-st.set_page_config(page_title="Integration Hub", page_icon="🔗", layout="wide")
+st.set_page_config(
+    page_title="Integration Hub • 4 Sistemas em 1",
+    page_icon="🔗",
+    layout="wide",
+)
+
+# ---------------------------------------------------------------------
+# Metadados visuais dos 4 sistemas para facilitar o entendimento
+# ---------------------------------------------------------------------
+SYSTEM_META = {
+    "stripe": {
+        "name": "Stripe (Financeiro)",
+        "icon": "💳",
+        "color": "#635BFF",
+        "description": "Notificações de pagamentos e transações de clientes",
+        "badge": "Pagamentos",
+    },
+    "rh_app": {
+        "name": "RH App (Recrutamento)",
+        "icon": "👥",
+        "color": "#00A86B",
+        "description": "Currículos, vagas e habilidades de candidatos",
+        "badge": "Recursos Humanos",
+    },
+    "crm": {
+        "name": "CRM (Vendas)",
+        "icon": "🤝",
+        "color": "#FF8C00",
+        "description": "Leads, propostas comerciais e relacionamento",
+        "badge": "Comercial",
+    },
+    "erp": {
+        "name": "ERP (Operações)",
+        "icon": "📦",
+        "color": "#2B78E4",
+        "description": "Pedidos de compra, logística, frete e itens de estoque",
+        "badge": "Logística & Pedidos",
+    },
+}
+
+
+def get_meta(source_id: str) -> Dict[str, str]:
+  return SYSTEM_META.get(
+      source_id,
+      {
+          "name": source_id.upper(),
+          "icon": "🌐",
+          "color": "#666666",
+          "description": "API externa integrada",
+          "badge": "API",
+      },
+  )
 
 
 # ---------------------------------------------------------------------
-# Helpers
+# Helpers de comunicação com a API FastAPI
 # ---------------------------------------------------------------------
 def api(method: str, path: str, **kwargs):
   try:
     r = requests.request(method, f"{API_URL}{path}", timeout=15, **kwargs)
   except requests.exceptions.ConnectionError:
-    st.error("Não foi possível conectar à API. Rode: `uvicorn main:app --reload`")
+    st.error(
+        "❌ **Não foi possível conectar à API FastAPI.**  \n"
+        "Abra o terminal e execute: `uvicorn main:app --reload`"
+    )
     st.stop()
   if r.status_code >= 400:
     try:
@@ -37,191 +96,404 @@ def api(method: str, path: str, **kwargs):
   return r.json(), None
 
 
-def load_examples():
-  examples = {}
-  for path in sorted(EXAMPLES_DIR.glob("*.json")):
-    data = json.loads(path.read_text(encoding="utf-8"))
-    examples[data["source_id"]] = data
-  return examples
+def load_example(source_id: str) -> Dict[str, Any]:
+  path = EXAMPLES_DIR / f"{source_id}-payload.json"
+  if not path.exists():
+    alt_map = {
+        "rh_app": "rh-payload.json",
+        "stripe": "stripe-payload.json",
+        "crm": "crm-payload.json",
+        "erp": "erp-payload.json",
+    }
+    path = EXAMPLES_DIR / alt_map.get(source_id, f"{source_id}.json")
+  if path.exists():
+    return json.loads(path.read_text(encoding="utf-8"))
+  return {"source_id": source_id, "external_id": "novo_001", "payload": {"campo": "valor"}}
 
 
 # ---------------------------------------------------------------------
-# Cabeçalho
+# Verificação de Saúde e Carga Inicial
 # ---------------------------------------------------------------------
-st.title("🔗 Hub de Integração e Consulta de Dados")
-st.caption(
-    "Recebe dados de APIs diferentes, armazena o payload original no MongoDB Atlas"
-    " (coleção **api_records**) e permite consultá-los depois."
-)
-
 health, err = api("GET", "/")
 if err:
-  st.error(err)
+  st.error(f"Erro ao verificar saúde da API: {err}")
   st.stop()
 
-sources, _ = api("GET", "/sources")
-sources = sources or []
-source_ids = [s["_id"] for s in sources]
-active_ids = [s["_id"] for s in sources if s.get("active")]
-examples = load_examples()
+sources_list, _ = api("GET", "/sources")
+sources_list = sources_list or []
+all_source_ids = [s["_id"] for s in sources_list]
+active_source_ids = [s["_id"] for s in sources_list if s.get("active")]
 
 # ---------------------------------------------------------------------
-# Sidebar — catálogo de fontes (api_sources)
+# Cabeçalho Principal Explicativo
 # ---------------------------------------------------------------------
-with st.sidebar:
-  st.header("📚 Fontes (api_sources)")
-  for s in sources:
-    icon = "🟢" if s.get("active") else "⚪"
-    st.markdown(f"{icon} **{s['name']}** — `{s['_id']}`  \n<small>{s.get('description', '')}</small>",
-                unsafe_allow_html=True)
-
-  with st.expander("➕ Cadastrar nova fonte"):
-    with st.form("nova_fonte", clear_on_submit=True):
-      new_id = st.text_input("ID (minúsculas, sem espaço)", placeholder="ex: ecommerce")
-      new_name = st.text_input("Nome", placeholder="ex: Loja Virtual")
-      new_desc = st.text_input("Descrição")
-      if st.form_submit_button("Cadastrar"):
-        _, err = api("POST", "/sources",
-                     json={"source_id": new_id, "name": new_name, "description": new_desc})
-        if err:
-          st.error(err)
-        else:
-          st.success("Fonte cadastrada!")
-          st.rerun()
-
-tab_send, tab_raw, tab_query, tab_stats = st.tabs(
-    ["📤 Simular API", "🗄️ Documentos brutos", "🔎 Query Mágica", "📊 Visão geral"]
+st.title("🔗 Hub de Integração: Centralizando 4 Sistemas no MongoDB")
+st.markdown(
+    "Este sistema conecta **4 áreas de negócio diferentes** em um único banco de dados, "
+    "provando que o MongoDB armazena dados com **formatos completamente diferentes na mesma coleção** (`api_records`)."
 )
 
 # ---------------------------------------------------------------------
-# 1. Simular o envio de uma API externa
+# Barra Lateral: Gestão e Catálogo (api_sources)
 # ---------------------------------------------------------------------
-with tab_send:
-  st.subheader("Simular o recebimento de dados de uma API externa")
-  st.write("Cada fonte envia um JSON com estrutura própria. O hub aceita **qualquer formato** no `payload`.")
+with st.sidebar:
+  st.header("🗂️ Catálogo de APIs (`api_sources`)")
+  st.caption("Fontes cadastradas e autorizadas a enviar dados:")
 
-  if not active_ids:
-    st.warning("Nenhuma fonte ativa. Rode `python setup_db.py --seed` ou cadastre uma na barra lateral.")
-  else:
-    col_a, col_b = st.columns([1, 2])
-    with col_a:
-      chosen = st.selectbox("Fonte (source_id)", active_ids)
-      template = examples.get(chosen, {"external_id": "", "payload": {"campo": "valor"}})
-      external_id = st.text_input(
-          "external_id (ID na API de origem)",
-          value=template.get("external_id", ""),
-          key=f"ext_{chosen}",
-          help="Usado para evitar duplicidade (índice único parcial).",
-      )
-    with col_b:
-      payload_txt = st.text_area(
-          "payload (JSON livre)",
-          value=json.dumps(template["payload"], indent=2, ensure_ascii=False),
-          height=300,
-          key=f"payload_{chosen}",
-      )
+  for s in sources_list:
+    meta = get_meta(s["_id"])
+    status_icon = "🟢" if s.get("active") else "🔴"
+    st.markdown(
+        f"{status_icon} **{meta['icon']} {s['name']}** (`{s['_id']}`)  \n"
+        f"<small>{s.get('description', '')}</small>",
+        unsafe_allow_html=True,
+    )
 
-    if st.button("🚀 Enviar para o hub", type="primary"):
-      try:
-        payload = json.loads(payload_txt)
-        if not isinstance(payload, dict):
-          raise ValueError("O payload precisa ser um objeto JSON { ... }")
-      except ValueError as e:
-        st.error(f"JSON inválido: {e}")
-      else:
-        body = {"payload": payload, "external_id": external_id or None}
-        res, err = api("POST", f"/records/{chosen}", json=body)
-        if err:
-          st.error(err)
+  st.divider()
+  with st.expander("➕ Cadastrar Nova API no Catálogo"):
+    with st.form("nova_fonte_form", clear_on_submit=True):
+      novo_id = st.text_input("ID único (ex: helpdesk)", placeholder="ex: suporte")
+      novo_nome = st.text_input("Nome da API", placeholder="ex: Suporte Zendesk")
+      novo_desc = st.text_input("Descrição", placeholder="ex: Chamados de clientes")
+      if st.form_submit_button("Cadastrar Nova API"):
+        if novo_id and novo_nome:
+          _, post_err = api(
+              "POST",
+              "/sources",
+              json={
+                  "source_id": novo_id.strip().lower(),
+                  "name": novo_nome,
+                  "description": novo_desc,
+              },
+          )
+          if post_err:
+            st.error(post_err)
+          else:
+            st.success("API cadastrada no catálogo!")
+            st.rerun()
         else:
-          st.success(f"Documento armazenado em api_records! `_id = {res['id']}`")
+          st.warning("Preencha ID e Nome.")
+
+# ---------------------------------------------------------------------
+# Abas Principais do Sistema
+# ---------------------------------------------------------------------
+tab_overview, tab_simulator, tab_collection, tab_queries = st.tabs(
+    [
+        "📊 1. Visão Geral (Os 4 Sistemas)",
+        "📤 2. Simular Envio de uma API",
+        "🗄️ 3. O Banco Unificado (`api_records`)",
+        "🔎 4. Consultas & Relatórios",
+    ]
+)
+
+# =====================================================================
+# ABA 1: VISÃO GERAL (OS 4 SISTEMAS EM 1 LUGAR)
+# =====================================================================
+with tab_overview:
+  st.subheader("🏢 Como os 4 Sistemas alimentam o Hub")
+  st.write(
+      "Cada sistema abaixo opera de forma independente na empresa. "
+      "O Hub recebe os eventos de todos eles e armazena os dados sem exigir que usem o mesmo formato."
+  )
+
+  stats_data, _ = api("GET", "/stats")
+  stats_dict = {item["source_id"]: item["registros"] for item in (stats_data or [])}
+  total_registros = sum(stats_dict.values())
+
+  # 4 Cards Visuais para os 4 sistemas
+  c1, c2, c3, c4 = st.columns(4)
+  cols = [c1, c2, c3, c4]
+  canonical_order = ["stripe", "rh_app", "crm", "erp"]
+
+  for idx, sid in enumerate(canonical_order):
+    meta = get_meta(sid)
+    count = stats_dict.get(sid, 0)
+    with cols[idx]:
+      with st.container(border=True):
+        st.markdown(f"### {meta['icon']} {meta['badge']}")
+        st.caption(f"**Sistema:** {meta['name']}")
+        st.write(meta["description"])
+        st.metric(label="Documentos Recebidos", value=count)
+
+  st.divider()
+
+  # Explicação visual da convergência
+  st.info(
+      f"🎯 **Ponto de convergência:** Todos os **{total_registros} documentos** acima estão armazenados "
+      f"dentro de **UMA ÚNICA coleção do MongoDB Atlas chamada `api_records`**. "
+      f"Não foi necessário criar `tabela_stripe`, `tabela_rh`, etc.",
+      icon="💡",
+  )
+
+  col_graf, col_tab = st.columns([1, 1])
+  with col_graf:
+    st.markdown("#### Volume de dados por sistema")
+    if stats_data:
+      df_stats = pd.DataFrame(stats_data)
+      st.bar_chart(df_stats.set_index("nome")["registros"])
+    else:
+      st.info("Nenhum dado cadastrado ainda.")
+
+  with col_tab:
+    st.markdown("#### Detalhes das Fontes Integradas")
+    if stats_data:
+      st.dataframe(
+          pd.DataFrame(stats_data)[["source_id", "nome", "registros", "ultimo_recebimento"]],
+          use_container_width=True,
+      )
+
+
+# =====================================================================
+# ABA 2: SIMULADOR DE ENVIO (SIMULA O WEBHOOK DE CADA API)
+# =====================================================================
+with tab_simulator:
+  st.subheader("📤 Simular a chegada de um evento externo")
+  st.write(
+      "Escolha qual dos sistemas está gerando dados agora. "
+      "Você pode alterar os valores antes de disparar para o banco de dados."
+  )
+
+  if not active_source_ids:
+    st.warning("Nenhuma fonte ativa disponível.")
+  else:
+    # Opções amigáveis no seletor
+    labels = {sid: f"{get_meta(sid)['icon']} {get_meta(sid)['name']}" for sid in active_source_ids}
+    selected_source = st.selectbox(
+        "Selecione o sistema que está enviando dados:",
+        options=active_source_ids,
+        format_func=lambda sid: labels.get(sid, sid),
+    )
+
+    meta = get_meta(selected_source)
+    example_data = load_example(selected_source)
+
+    st.markdown(f"**Cenário:** Enviando dados de **{meta['name']}** — *{meta['description']}*")
+
+    col_sim_left, col_sim_right = st.columns([1, 2])
+
+    with col_sim_left:
+      ext_id_input = st.text_input(
+          "ID no sistema original (`external_id`):",
+          value=example_data.get("external_id", f"evt_{int(pd.Timestamp.now().timestamp())}"),
+          help="Usado pelo índice único para evitar que a mesma mensagem seja processada duas vezes.",
+      )
+      st.caption("ℹ️ Se tentar enviar 2 vezes o mesmo ID para a mesma fonte, o MongoDB rejeita a duplicata.")
+
+    with col_sim_right:
+      payload_text = st.text_area(
+          f"Conteúdo livre que a API externa enviou (`payload` em JSON):",
+          value=json.dumps(example_data.get("payload", {}), indent=2, ensure_ascii=False),
+          height=260,
+      )
+
+    btn_send = st.button(
+        f"🚀 Disparar evento de {meta['name']} para o MongoDB",
+        type="primary",
+        use_container_width=True,
+    )
+
+    if btn_send:
+      try:
+        parsed_payload = json.loads(payload_text)
+        if not isinstance(parsed_payload, dict):
+          raise ValueError("O payload precisa ser um objeto JSON (começar e terminar com { }).")
+      except ValueError as e:
+        st.error(f"❌ JSON inválido: {e}")
+      else:
+        req_body = {"payload": parsed_payload, "external_id": ext_id_input or None}
+        res, post_err = api("POST", f"/records/{selected_source}", json=req_body)
+
+        if post_err:
+          if "já foi recebido" in str(post_err) or "409" in str(post_err):
+            st.warning(
+                f"🛡️ **Duplicata bloqueada pelo MongoDB (HTTP 409)!**  \n"
+                f"O evento `{ext_id_input}` de **{meta['name']}** já existia no banco. "
+                f"O índice único parcial impediu a duplicação.",
+                icon="⚠️",
+            )
+          else:
+            st.error(post_err)
+        else:
+          st.success(
+              f"🎉 **Sucesso!** O Hub recebeu o evento de **{meta['name']}** e persistiu "
+              f"o documento na coleção `api_records` com o ID `{res['id']}`!",
+              icon="✅",
+          )
           st.balloons()
 
-# ---------------------------------------------------------------------
-# 2. Documentos brutos: formatos diferentes na MESMA coleção
-# ---------------------------------------------------------------------
-with tab_raw:
-  st.subheader("Documentos armazenados em `api_records`")
-  st.write("Observe: documentos com **payloads completamente diferentes** convivem na mesma coleção.")
-  filtro = st.selectbox("Filtrar por fonte", ["(todas)"] + source_ids, key="raw_filter")
-  params = {"limit": 100}
-  if filtro != "(todas)":
-    params["source_id"] = filtro
-  records, err = api("GET", "/records", params=params)
-  if err:
-    st.error(err)
+
+# =====================================================================
+# ABA 3: BANCO UNIFICADO (PROVA DO POLIMORFISMO)
+# =====================================================================
+with tab_collection:
+  st.subheader("🗄️ Coleção Única: `api_records`")
+  st.markdown(
+      "Aqui está a **prova prática do trabalho**: documentos financeiros da Stripe, currículos do RH, "
+      "leads do CRM e pedidos do ERP **moram pacificamente dentro da mesma coleção**, sem exigir que todos tenham o mesmo formato."
+  )
+
+  col_filter, col_limit = st.columns([2, 1])
+  with col_filter:
+    filtro_sistema = st.selectbox(
+        "Filtrar exibição por sistema:",
+        options=["(todos os sistemas juntos)"] + all_source_ids,
+        format_func=lambda s: "(todos os sistemas juntos)" if s.startswith("(") else f"{get_meta(s)['icon']} {get_meta(s)['name']}",
+    )
+  with col_limit:
+    limite = st.slider("Quantidade máxima:", min_value=5, max_value=50, value=20)
+
+  params = {"limit": limite}
+  if not filtro_sistema.startswith("("):
+    params["source_id"] = filtro_sistema
+
+  records_data, rec_err = api("GET", "/records", params=params)
+
+  if rec_err:
+    st.error(rec_err)
+  elif not records_data:
+    st.info("Nenhum registro encontrado.")
   else:
-    st.caption(f"{len(records)} documento(s)")
-    for rec in records:
-      label = f"{rec['source_id']} · {rec.get('external_id', '—')} · {rec['received_at'][:19]}"
-      with st.expander(label):
-        st.json(rec)
+    st.caption(f"Mostrando {len(records_data)} documento(s) armazenado(s):")
 
-# ---------------------------------------------------------------------
-# 3. Query Mágica: payload -> tabela
-# ---------------------------------------------------------------------
-with tab_query:
-  st.subheader("Extrair informações específicas do payload")
-  st.write("O banco transforma o JSON flexível em **colunas organizadas** na saída "
-           "(equivalente ao `dados->>'campo'` do PostgreSQL).")
+    for doc in records_data:
+      sid = doc.get("source_id", "desconhecido")
+      meta = get_meta(sid)
+      payload = doc.get("payload", {})
 
-  if not source_ids:
-    st.info("Nenhuma fonte cadastrada.")
+      # Resumo legível para bater o olho rápido
+      resumo_parts = []
+      if sid == "stripe":
+        resumo_parts.append(f"Cliente: **{payload.get('customer', '—')}**")
+        resumo_parts.append(f"Valor: **R$ {payload.get('amount', 0):.2f}**")
+        resumo_parts.append(f"Status: `{payload.get('status', '—')}`")
+      elif sid == "rh_app":
+        resumo_parts.append(f"Candidato: **{payload.get('candidate', '—')}**")
+        resumo_parts.append(f"Cargo: **{payload.get('position', '—')}**")
+        skills = payload.get("skills", [])
+        if skills:
+          resumo_parts.append(f"Skills: `{', '.join(skills)}`")
+      elif sid == "crm":
+        resumo_parts.append(f"Empresa: **{payload.get('company', '—')}**")
+        resumo_parts.append(f"Estágio: `{payload.get('stage', '—')}`")
+        resumo_parts.append(f"Valor estimado: **R$ {payload.get('estimated_value', 0):,.2f}**")
+      elif sid == "erp":
+        resumo_parts.append(f"Pedido: **#{payload.get('order_number', '—')}**")
+        resumo_parts.append(f"Cliente: **{payload.get('client', '—')}**")
+        resumo_parts.append(f"Total: **R$ {payload.get('total', 0):.2f}**")
+      else:
+        for k, v in list(payload.items())[:3]:
+          resumo_parts.append(f"{k}: `{v}`")
+
+      resumo_str = " | ".join(resumo_parts)
+      titulo_card = (
+          f"{meta['icon']} [{meta['badge']}] ID Externo: {doc.get('external_id', 'sem ID')} •"
+          f" Recebido em: {doc.get('received_at', '')[:19]}"
+      )
+
+      with st.expander(titulo_card):
+        st.markdown(f"**Resumo do Evento:** {resumo_str}")
+        st.markdown("**Documento BSON Completo (como está gravado no MongoDB Atlas):**")
+        st.json(doc)
+
+
+# =====================================================================
+# ABA 4: CONSULTAS & RELATÓRIOS (A "QUERY MÁGICA")
+# =====================================================================
+with tab_queries:
+  st.subheader("🔎 Consultas & Relatórios Estruturados (A Query Mágica)")
+  st.markdown(
+      "Como consultar dados que não têm um formato rígido? O MongoDB usa o operador de projeção "
+      "(`$project`) para **transformar o JSON flexível em uma tabela organizada sob demanda**."
+  )
+
+  # Botões rápidos com 1 clique para demonstração
+  st.markdown("#### ⚡ Relatórios Prontos (Clique para testar):")
+  rc1, rc2, rc3 = st.columns(3)
+
+  rel_escolhido = None
+  if rc1.button("💳 Extrato Financeiro (Stripe)", use_container_width=True):
+    rel_escolhido = ("stripe", ["customer", "amount", "status", "currency"], None, None, None)
+  if rc2.button("👥 Banco de Talentos (RH App)", use_container_width=True):
+    rel_escolhido = ("rh_app", ["candidate", "position", "salary_expectation"], None, None, None)
+  if rc3.button("📦 Faturamento de Pedidos (ERP)", use_container_width=True):
+    rel_escolhido = ("erp", ["order_number", "client", "total"], None, None, None)
+
+  st.divider()
+
+  st.markdown("#### 🛠️ Ou monte sua própria consulta personalizada:")
+  qc_source = st.selectbox(
+      "Escolha o sistema para consultar:",
+      options=all_source_ids,
+      format_func=lambda sid: f"{get_meta(sid)['icon']} {get_meta(sid)['name']}",
+      key="custom_qc_source",
+  )
+
+  fields_resp, _ = api("GET", f"/sources/{qc_source}/fields")
+  campos_disponiveis = [item["campo"] for item in (fields_resp or [])]
+
+  if not campos_disponiveis:
+    st.info("Esse sistema ainda não possui registros com payload no banco.")
   else:
-    q_source = st.selectbox("Fonte", source_ids, key="q_source")
-    fields_info, _ = api("GET", f"/sources/{q_source}/fields")
-    available = [f["campo"] for f in (fields_info or [])]
+    st.write(
+        f"**Campos detectados automaticamente no payload de `{qc_source}`:** "
+        + ", ".join(f"`{c}`" for c in campos_disponiveis)
+    )
 
-    if not available:
-      st.info("Essa fonte ainda não possui registros.")
-    else:
-      st.markdown("**Campos descobertos no payload** (schema on read): "
-                  + ", ".join(f"`{f['campo']}` ({f['ocorrencias']})" for f in fields_info))
+    col_fields_sel, col_filter_exp = st.columns([2, 1])
 
-      chosen_fields = st.multiselect("Campos a extrair", available, default=available[:3])
+    with col_fields_sel:
+      campos_selecionados = st.multiselect(
+          "Selecione as colunas para o relatório tabular:",
+          options=campos_disponiveis,
+          default=campos_disponiveis[:3],
+      )
 
-      with st.expander("Filtro opcional dentro do payload"):
-        fc1, fc2, fc3 = st.columns(3)
-        f_field = fc1.selectbox("Campo", ["(nenhum)"] + available)
-        f_op = fc2.selectbox("Operador", ["eq", "ne", "gt", "gte", "lt", "lte"])
-        f_value = fc3.text_input("Valor", placeholder="ex: paid ou 200")
+    with col_filter_exp:
+      with st.expander("Filtrar por valor específico (opcional)"):
+        filtro_campo = st.selectbox("Campo para filtrar:", ["(sem filtro)"] + campos_disponiveis)
+        filtro_op = st.selectbox("Operador:", ["eq", "gt", "gte", "lt", "lte", "ne"])
+        filtro_val = st.text_input("Valor:", placeholder="ex: paid ou 200")
 
-      if chosen_fields:
-        if f_field != "(nenhum)" and f_value:
-          res, err = api("GET", f"/records/{q_source}/filter",
-                         params={"field": f_field, "value": f_value, "op": f_op})
-          if err:
-            st.error(err)
-          else:
-            st.code("db.api_records.find(" + json.dumps(res["query"], ensure_ascii=False) + ")",
-                    language="javascript")
-            rows = [{"external_id": r.get("external_id"),
-                     **{f: r["payload"].get(f) for f in chosen_fields}}
-                    for r in res["resultados"]]
-            st.dataframe(pd.DataFrame(rows), use_container_width=True)
-        else:
-          res, err = api("GET", f"/records/{q_source}/extract", params={"fields": chosen_fields})
-          if err:
-            st.error(err)
-          else:
-            st.code("db.api_records.aggregate(" + json.dumps(res["pipeline"], indent=2, ensure_ascii=False) + ")",
-                    language="javascript")
-            st.dataframe(pd.DataFrame(res["resultados"]), use_container_width=True)
+    # Executa a consulta padrão ou o relatório clicado
+    exec_source = rel_escolhido[0] if rel_escolhido else qc_source
+    exec_fields = rel_escolhido[1] if rel_escolhido else campos_selecionados
 
-# ---------------------------------------------------------------------
-# 4. Visão geral
-# ---------------------------------------------------------------------
-with tab_stats:
-  st.subheader("Registros por fonte")
-  data, err = api("GET", "/stats")
-  if err:
-    st.error(err)
-  elif data:
-    df = pd.DataFrame(data)
-    c1, c2 = st.columns(2)
-    c1.metric("Total de registros", int(df["registros"].sum()))
-    c2.metric("Fontes com dados", len(df))
-    st.bar_chart(df.set_index("nome")["registros"])
-    st.dataframe(df, use_container_width=True)
-  else:
-    st.info("Nenhum registro ainda.")
+    if exec_fields:
+      if not rel_escolhido and filtro_campo != "(sem filtro)" and filtro_val:
+        # Consulta com filtro
+        q_res, q_err = api(
+            "GET",
+            f"/records/{exec_source}/filter",
+            params={"field": filtro_campo, "value": filtro_val, "op": filtro_op},
+        )
+        if q_err:
+          st.error(q_err)
+        elif q_res:
+          st.markdown("##### 💻 Comando MongoDB executado:")
+          st.code(
+              f"db.api_records.find({json.dumps(q_res['query'], ensure_ascii=False)})",
+              language="javascript",
+          )
+
+          linhas = []
+          for r in q_res.get("resultados", []):
+            linha = {"external_id": r.get("external_id")}
+            for f in exec_fields:
+              linha[f] = r.get("payload", {}).get(f)
+            linhas.append(linha)
+          st.dataframe(pd.DataFrame(linhas), use_container_width=True)
+      else:
+        # Consulta de extração ($project)
+        ext_res, ext_err = api(
+            "GET", f"/records/{exec_source}/extract", params={"fields": exec_fields}
+        )
+        if ext_err:
+          st.error(ext_err)
+        elif ext_res:
+          st.markdown("##### 💻 Pipeline de Agregação executado no MongoDB Atlas:")
+          st.code(
+              f"db.api_records.aggregate({json.dumps(ext_res['pipeline'], indent=2, ensure_ascii=False)})",
+              language="javascript",
+          )
+          st.markdown("##### 📊 Tabela gerada dinamicamente a partir do JSON:")
+          st.dataframe(pd.DataFrame(ext_res.get("resultados", [])), use_container_width=True)
