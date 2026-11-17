@@ -130,3 +130,109 @@ const plan = dbHub.api_records
   .explain("queryPlanner");
 print("\n=== 12. Plano de execução (deve usar índice) ===");
 printjson(plan.queryPlanner.winningPlan);
+
+// 13. Busca Textual Global (Wildcard Text Search no payload)
+show(
+  "13. Busca textual: registros contendo 'Uberlândia' ou 'Python'",
+  dbHub.api_records.find(
+    { $text: { $search: "Uberlândia Python" } },
+    { score: { $meta: "textScore" }, source_id: 1, external_id: 1, payload: 1 }
+  ).sort({ score: { $meta: "textScore" } })
+);
+
+// 14. Raio-X de Schema: inferência de campos, tipos BSON e frequências (Stripe)
+show(
+  "14. Raio-X de Schema: tipos e frequência de campos na Stripe",
+  dbHub.api_records.aggregate([
+    { $match: { source_id: "stripe" } },
+    { $project: { kv: { $objectToArray: "$payload" } } },
+    { $unwind: "$kv" },
+    {
+      $group: {
+        _id: "$kv.k",
+        ocorrencias: { $sum: 1 },
+        tipos_detectados: { $addToSet: { $type: "$kv.v" } }
+      }
+    },
+    { $sort: { ocorrencias: -1 } }
+  ])
+);
+
+// 15. Dashboard Multidimensional em Paralelo ($facet):
+//     Executa 4 análises analíticas em uma única passada
+show(
+  "15. Analytics Paralelo ($facet): Timeline, Histograma por $bucketAuto e Status",
+  dbHub.api_records.aggregate([
+    {
+      $facet: {
+        kpis: [
+          {
+            $group: {
+              _id: null,
+              total_registros: { $sum: 1 },
+              fontes: { $addToSet: "$source_id" }
+            }
+          }
+        ],
+        timeline: [
+          {
+            $group: {
+              _id: { $dateToString: { format: "%Y-%m-%d %H:00", date: "$received_at" } },
+              contagem: { $sum: 1 }
+            }
+          },
+          { $sort: { _id: 1 } }
+        ],
+        faixas_valores: [
+          {
+            $match: {
+              $or: [
+                { "payload.amount": { $exists: true, $type: "number" } },
+                { "payload.total": { $exists: true, $type: "number" } },
+                { "payload.estimated_value": { $exists: true, $type: "number" } }
+              ]
+            }
+          },
+          {
+            $addFields: {
+              valor: {
+                $ifNull: [
+                  "$payload.amount",
+                  { $ifNull: ["$payload.total", "$payload.estimated_value"] }
+                ]
+              }
+            }
+          },
+          {
+            $bucketAuto: {
+              groupBy: "$valor",
+              buckets: 3,
+              output: {
+                contagem: { $sum: 1 },
+                min: { $min: "$valor" },
+                max: { $max: "$valor" },
+                total: { $sum: "$valor" }
+              }
+            }
+          }
+        ],
+        status_distribuicao: [
+          {
+            $match: {
+              $or: [
+                { "payload.status": { $exists: true } },
+                { "payload.stage": { $exists: true } }
+              ]
+            }
+          },
+          {
+            $project: {
+              status: { $ifNull: ["$payload.status", "$payload.stage"] }
+            }
+          },
+          { $sortByCount: "$status" }
+        ]
+      }
+    }
+  ])
+);

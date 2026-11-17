@@ -95,11 +95,14 @@ Guarda os documentos recebidos. **Regra de ouro:**
 | `idx_source`           | `{ source_id: 1 }`                    | Consultas por fonte                                           |
 | `idx_source_received`  | `{ source_id: 1, received_at: -1 }`   | Consultas por fonte ordenadas pelos mais recentes             |
 | `uniq_source_external` | `{ source_id: 1, external_id: 1 }`    | **Único e parcial**: impede receber o mesmo evento duas vezes |
+| `idx_text_payload`     | `{ "payload.$**": "text" }`           | **Wildcard Text Index**: busca textual global em qualquer campo |
 
 O índice `uniq_source_external` usa `partialFilterExpression: { external_id: { $type: "string" } }`.
 Assim, a unicidade só vale quando o `external_id` existe. Fontes que não mandam ID
 continuam podendo gravar vários registros. Isso garante **idempotência**: se a API externa
 reenviar o mesmo webhook, o hub recusa a duplicata (HTTP 409).
+
+O índice `idx_text_payload` permite consultas com `{ $text: { $search: "termo" } }` ordenadas por relevância (`textScore`), dispensando o conhecimento prévio da chave onde o texto reside.
 
 > O índice `idx_source` é, tecnicamente, coberto pelo prefixo de `idx_source_received`.
 > Ele foi mantido por clareza didática. Em produção poderia ser removido.

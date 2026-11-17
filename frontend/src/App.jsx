@@ -17,7 +17,11 @@ import {
   ExternalLink,
   Table as TableIcon,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  FileSearch,
+  Sparkles,
+  Tag,
+  X
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
@@ -131,24 +135,61 @@ export default function App() {
   const [queryFilterOp, setQueryFilterOp] = useState('eq');
   const [queryFilterVal, setQueryFilterVal] = useState('');
 
+  // State: Busca Textual Global
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [searchMeta, setSearchMeta] = useState(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+
+  // State: Raio-X do Schema (Inferência BSON)
+  const [schemaSource, setSchemaSource] = useState('stripe');
+  const [schemaData, setSchemaData] = useState(null);
+  const [schemaLoading, setSchemaLoading] = useState(false);
+
+  // State: Dashboard Analítico Multidimensional ($facet)
+  const [facetData, setFacetData] = useState(null);
+  const [facetSource, setFacetSource] = useState('all');
+  const [facetLoading, setFacetLoading] = useState(false);
+  const [showFacetCode, setShowFacetCode] = useState(false);
+
   // Carrega dados iniciais
   const refreshData = async () => {
     try {
       setLoading(true);
-      const [hRes, sRes, srcRes, rRes] = await Promise.all([
+      const [hRes, sRes, srcRes, rRes, fRes] = await Promise.all([
         fetch(`${API_BASE}/`).then(r => r.json()).catch(() => ({ status: 'error' })),
         fetch(`${API_BASE}/stats`).then(r => r.json()).catch(() => []),
         fetch(`${API_BASE}/sources`).then(r => r.json()).catch(() => []),
-        fetch(`${API_BASE}/records?limit=50`).then(r => r.json()).catch(() => [])
+        fetch(`${API_BASE}/records?limit=50`).then(r => r.json()).catch(() => []),
+        fetch(`${API_BASE}/analytics/dashboard`).then(r => r.json()).catch(() => null)
       ]);
       setHealth(hRes);
       setStats(Array.isArray(sRes) ? sRes : []);
       setSources(Array.isArray(srcRes) ? srcRes : []);
       setRecords(Array.isArray(rRes) ? rRes : []);
+      if (fRes) setFacetData(fRes);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Carrega $facet quando muda a fonte do filtro
+  const handleFacetSourceChange = async (sid) => {
+    setFacetSource(sid);
+    try {
+      setFacetLoading(true);
+      const url = sid && sid !== 'all' 
+        ? `${API_BASE}/analytics/dashboard?source_id=${sid}` 
+        : `${API_BASE}/analytics/dashboard`;
+      const res = await fetch(url);
+      const data = await res.json();
+      setFacetData(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setFacetLoading(false);
     }
   };
 
@@ -264,6 +305,55 @@ export default function App() {
     handleRunQuery(fields, sid);
   };
 
+  // Busca Textual Global
+  const handleTextSearch = async (e) => {
+    if (e) e.preventDefault();
+    if (!searchTerm.trim()) {
+      setSearchResults(null);
+      setSearchMeta(null);
+      return;
+    }
+    try {
+      setSearchLoading(true);
+      const url = `${API_BASE}/records/search?q=${encodeURIComponent(searchTerm)}&source_id=${filterSource}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      setSearchResults(Array.isArray(data.resultados) ? data.resultados : []);
+      setSearchMeta(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleClearSearch = () => {
+    setSearchTerm('');
+    setSearchResults(null);
+    setSearchMeta(null);
+  };
+
+  // Raio-X de Schema (Inferência BSON)
+  const fetchSchema = async (sourceId) => {
+    try {
+      setSchemaLoading(true);
+      const res = await fetch(`${API_BASE}/sources/${sourceId}/schema`);
+      const data = await res.json();
+      setSchemaData(data);
+    } catch (err) {
+      console.error(err);
+      setSchemaData(null);
+    } finally {
+      setSchemaLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'schema' && schemaSource) {
+      fetchSchema(schemaSource);
+    }
+  }, [activeTab, schemaSource]);
+
   const totalDocs = stats.reduce((acc, s) => acc + (s.registros || 0), 0);
 
   return (
@@ -321,6 +411,13 @@ export default function App() {
         >
           <Search size={18} />
           4. Consultas & Relatórios
+        </button>
+        <button 
+          className={`tab-btn ${activeTab === 'schema' ? 'active' : ''}`}
+          onClick={() => setActiveTab('schema')}
+        >
+          <Code2 size={18} />
+          5. Raio-X do Schema (BSON)
         </button>
       </nav>
 
@@ -416,6 +513,186 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+          </div>
+
+          {/* Painel Analítico Multidimensional via $facet */}
+          <div style={{ marginTop: '2.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#fff', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Sparkles size={20} style={{ color: 'var(--accent-indigo)' }} />
+                  Dashboard Analítico Multidimensional (Pipeline <code>$facet</code>)
+                </h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  O operador <code>$facet</code> bifurca o pipeline e processa 4 análises estatísticas em paralelo em uma única consulta ao MongoDB.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <select 
+                  className="form-select" 
+                  style={{ width: 'auto', minWidth: '160px' }}
+                  value={facetSource}
+                  onChange={e => handleFacetSourceChange(e.target.value)}
+                  disabled={facetLoading}
+                >
+                  <option value="all">Todas as Fontes</option>
+                  {sources.map(s => (
+                    <option key={s._id} value={s._id}>{s.name}</option>
+                  ))}
+                </select>
+                <button 
+                  className="btn btn-outline" 
+                  onClick={() => setShowFacetCode(!showFacetCode)}
+                  style={{ fontSize: '0.8rem', padding: '0.45rem 0.8rem' }}
+                >
+                  <Code2 size={15} />
+                  {showFacetCode ? 'Ocultar Pipeline' : 'Ver Pipeline $facet'}
+                </button>
+              </div>
+            </div>
+
+            {showFacetCode && facetData?.pipeline_usado && (
+              <div style={{ marginBottom: '1.5rem' }}>
+                <div className="code-box">
+                  {`db.api_records.aggregate(${JSON.stringify(facetData.pipeline_usado, null, 2)})`}
+                </div>
+              </div>
+            )}
+
+            {facetLoading ? (
+              <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                <RefreshCw size={20} className="animate-spin" style={{ margin: '0 auto 0.5rem' }} />
+                <span>Processando facetas analíticas no Atlas...</span>
+              </div>
+            ) : facetData && (
+              <div>
+                {/* KPIs Rápidos da Faceta */}
+                <div className="grid-4" style={{ marginBottom: '1.25rem' }}>
+                  <div className="card" style={{ padding: '1rem 1.25rem' }}>
+                    <span className="metric-label">Total de Eventos Analisados</span>
+                    <div className="metric-number" style={{ color: '#fff' }}>
+                      {facetData.kpis?.total_registros || 0}
+                    </div>
+                  </div>
+                  <div className="card" style={{ padding: '1rem 1.25rem' }}>
+                    <span className="metric-label">APIs Únicas na Faceta</span>
+                    <div className="metric-number" style={{ color: 'var(--accent-indigo)' }}>
+                      {facetData.kpis?.total_fontes || 0}
+                    </div>
+                  </div>
+                  <div className="card" style={{ padding: '1rem 1.25rem' }}>
+                    <span className="metric-label">Com Idempotência (external_id)</span>
+                    <div className="metric-number" style={{ color: '#10b981' }}>
+                      {facetData.kpis?.com_external_id || 0}
+                    </div>
+                  </div>
+                  <div className="card" style={{ padding: '1rem 1.25rem' }}>
+                    <span className="metric-label">Faixas no Histograma</span>
+                    <div className="metric-number" style={{ color: '#f59e0b' }}>
+                      {facetData.faixas_valores?.length || 0}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Duas Colunas: $bucketAuto (Valores) e $sortByCount (Status) */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.25rem', marginBottom: '1.25rem' }}>
+                  {/* Histograma com $bucketAuto */}
+                  <div className="card" style={{ padding: '1.25rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                      <strong style={{ fontSize: '0.92rem', color: '#fff' }}>
+                        📊 Histograma de Valores (<code>$bucketAuto</code>)
+                      </strong>
+                      <span className="badge" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', fontSize: '0.72rem' }}>
+                        Auto-Buckets BSON
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                      Agrupamento probabilístico em faixas de valores (preços, totais e salários) calculado pelo MongoDB.
+                    </p>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                      {facetData.faixas_valores && facetData.faixas_valores.length > 0 ? (
+                        facetData.faixas_valores.map((b, idx) => (
+                          <div key={idx} style={{ background: 'var(--bg-secondary)', padding: '0.65rem 0.85rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.84rem', fontWeight: 600, color: '#fff' }}>
+                              <span>Faixa: R$ {(b._id?.min || b.min || 0).toLocaleString('pt-BR')} — R$ {(b._id?.max || b.max || 0).toLocaleString('pt-BR')}</span>
+                              <span style={{ color: 'var(--accent-indigo)' }}>{b.contagem} {b.contagem === 1 ? 'doc' : 'docs'}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: '0.25rem' }}>
+                              <span>Média: R$ {Number(b.media || 0).toFixed(2)}</span>
+                              <span>Soma: R$ {Number(b.total || 0).toLocaleString('pt-BR')}</span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p style={{ fontSize: '0.82rem', color: 'var(--text-dim)', textAlign: 'center', padding: '1rem' }}>
+                          Nenhum campo numérico elegível para histograma nesta seleção.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Distribuição por Status com $sortByCount */}
+                  <div className="card" style={{ padding: '1.25rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                      <strong style={{ fontSize: '0.92rem', color: '#fff' }}>
+                        🏷️ Distribuição por Status (<code>$sortByCount</code>)
+                      </strong>
+                      <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', fontSize: '0.72rem' }}>
+                        Status & Estágios
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                      Contagem e ordenação por popularidade de status/estágios entre as APIs integradas.
+                    </p>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                      {facetData.status_distribuicao && facetData.status_distribuicao.length > 0 ? (
+                        facetData.status_distribuicao.map((st, idx) => (
+                          <div key={idx} style={{ background: 'var(--bg-secondary)', padding: '0.65rem 0.85rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.84rem', color: '#38bdf8' }}>
+                                {String(st._id || 'não informado')}
+                              </span>
+                              <span className="badge" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8', fontSize: '0.75rem' }}>
+                                {st.count} {st.count === 1 ? 'ocorrência' : 'ocorrências'}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p style={{ fontSize: '0.82rem', color: 'var(--text-dim)', textAlign: 'center', padding: '1rem' }}>
+                          Nenhum status detectado nos documentos desta seleção.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Timeline de Recebimento ($dateToString) */}
+                {facetData.timeline && facetData.timeline.length > 0 && (
+                  <div className="card" style={{ padding: '1rem 1.25rem' }}>
+                    <strong style={{ fontSize: '0.9rem', color: '#fff', display: 'block', marginBottom: '0.75rem' }}>
+                      ⏱️ Linha do Tempo de Recebimento (<code>$dateToString</code> + <code>$group</code>)
+                    </strong>
+                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                      {facetData.timeline.map((t, idx) => (
+                        <div key={idx} style={{ background: 'var(--bg-secondary)', padding: '0.5rem 0.85rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: '0.8rem' }}>
+                          <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.72rem' }}>{t._id}</span>
+                          <strong style={{ color: '#fff' }}>{t.contagem} {t.contagem === 1 ? 'evento' : 'eventos'}</strong>
+                          {Array.isArray(t.fontes) && (
+                            <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-dim)' }}>
+                              Fontes: {t.fontes.join(', ')}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -545,7 +822,13 @@ export default function App() {
                 className="form-select" 
                 style={{ width: 'auto', minWidth: '180px' }}
                 value={filterSource}
-                onChange={e => setFilterSource(e.target.value)}
+                onChange={e => {
+                  setFilterSource(e.target.value);
+                  if (searchResults !== null) {
+                    setSearchResults(null);
+                    setSearchMeta(null);
+                  }
+                }}
               >
                 <option value="all">Todas as fontes ({records.length})</option>
                 {sources.map(s => (
@@ -555,16 +838,63 @@ export default function App() {
             </div>
           </div>
 
+          {/* Barra de Busca Textual Global (Wildcard Text Search) */}
+          <div className="card" style={{ padding: '1.25rem', marginBottom: '1.5rem', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}>
+            <form onSubmit={handleTextSearch} style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ position: 'relative', flex: 1, minWidth: '240px' }}>
+                <Search size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  style={{ paddingLeft: '2.5rem' }}
+                  placeholder="Buscar texto em qualquer campo do payload (ex: Uberlândia, Maria, CAF-500G, pix)..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                />
+              </div>
+              <button type="submit" className="btn btn-primary" disabled={searchLoading || !searchTerm.trim()}>
+                <FileSearch size={16} />
+                {searchLoading ? 'Buscando...' : 'Buscar Texto ($text)'}
+              </button>
+              {searchResults !== null && (
+                <button type="button" className="btn btn-outline" onClick={handleClearSearch}>
+                  <X size={16} />
+                  Limpar Busca
+                </button>
+              )}
+            </form>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+                🔍 <strong>Wildcard Text Search:</strong> consulta o índice de texto sobre <code>payload.$**</code> no MongoDB Atlas.
+              </span>
+              {searchMeta && (
+                <span className="badge" style={{ background: 'rgba(99, 102, 241, 0.2)', color: '#818cf8', fontSize: '0.75rem' }}>
+                  {searchResults.length} {searchResults.length === 1 ? 'resultado encontrado' : 'resultados encontrados'} • Modo: {searchMeta.modo}
+                </span>
+              )}
+            </div>
+          </div>
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {records
-              .filter(r => filterSource === 'all' || r.source_id === filterSource)
-              .map(rec => {
-                const meta = SYSTEM_META[rec.source_id] || { name: rec.source_id, badge: 'API', badgeBg: 'rgba(255,255,255,0.1)', badgeColor: '#fff', icon: Database };
-                const Icon = meta.icon;
-                return (
-                  <DocumentCard key={rec._id} record={rec} meta={meta} Icon={Icon} />
-                );
-              })}
+            {(searchResults !== null 
+              ? searchResults 
+              : records.filter(r => filterSource === 'all' || r.source_id === filterSource)
+            ).map(rec => {
+              const meta = SYSTEM_META[rec.source_id] || { name: rec.source_id, badge: 'API', badgeBg: 'rgba(255,255,255,0.1)', badgeColor: '#fff', icon: Database };
+              const Icon = meta.icon;
+              return (
+                <DocumentCard key={rec._id} record={rec} meta={meta} Icon={Icon} />
+              );
+            })}
+
+            {searchResults !== null && searchResults.length === 0 && (
+              <div className="card" style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                <p style={{ marginBottom: '1rem' }}>Nenhum documento encontrado contendo o termo <strong>"{searchTerm}"</strong>.</p>
+                <button className="btn btn-outline" onClick={handleClearSearch} style={{ margin: '0 auto' }}>
+                  Voltar para todos os documentos
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -778,6 +1108,167 @@ export default function App() {
           )}
         </div>
       )}
+
+      {/* ========================================================= */}
+      {/* TAB 5: RAIO-X DO SCHEMA (BSON) */}
+      {/* ========================================================= */}
+      {activeTab === 'schema' && (
+        <div>
+          <div style={{ marginBottom: '1.5rem' }}>
+            <h2 style={{ fontSize: '1.3rem', fontWeight: 700, color: '#fff' }}>Raio-X de Schema & Inferência de Tipos BSON</h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+              Como o MongoDB não impõe tabelas estáticas, usamos pipelines de agregação (<code>$objectToArray</code> + <code>$type</code>) para auditar a estrutura viva e a evolução das APIs em tempo real.
+            </p>
+          </div>
+
+          {/* Seletor de Fonte */}
+          <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+            {['stripe', 'rh_app', 'crm', 'erp'].map(sid => {
+              const meta = SYSTEM_META[sid] || {};
+              const Icon = meta.icon || Database;
+              const isSelected = schemaSource === sid;
+              return (
+                <button
+                  key={sid}
+                  onClick={() => setSchemaSource(sid)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.65rem 1.25rem',
+                    background: isSelected ? meta.badgeBg : 'var(--bg-card)',
+                    border: `1px solid ${isSelected ? meta.color : 'var(--border-color)'}`,
+                    borderRadius: 'var(--radius-sm)',
+                    color: isSelected ? '#fff' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    fontSize: '0.88rem',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <Icon size={18} style={{ color: meta.color }} />
+                  {meta.name}
+                </button>
+              );
+            })}
+          </div>
+
+          {schemaLoading ? (
+            <div className="card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+              <RefreshCw size={24} className="animate-spin" style={{ margin: '0 auto 0.75rem' }} />
+              <p>Inspecionando documentos no MongoDB Atlas...</p>
+            </div>
+          ) : schemaData && (
+            <div>
+              {/* Cards de Métricas do Schema */}
+              <div className="grid-4" style={{ marginBottom: '1.5rem' }}>
+                <div className="card">
+                  <span className="metric-label">Documentos Inspecionados</span>
+                  <div className="metric-number" style={{ color: '#fff' }}>{schemaData.total_records}</div>
+                </div>
+                <div className="card">
+                  <span className="metric-label">Campos Distintos Detectados</span>
+                  <div className="metric-number" style={{ color: 'var(--accent-indigo)' }}>
+                    {schemaData.fields?.length || 0}
+                  </div>
+                </div>
+                <div className="card">
+                  <span className="metric-label">Campos Obrigatórios (100%)</span>
+                  <div className="metric-number" style={{ color: '#10b981' }}>
+                    {schemaData.fields?.filter(f => f.obrigatorio).length || 0}
+                  </div>
+                </div>
+                <div className="card">
+                  <span className="metric-label">Campos Opcionais / Drift</span>
+                  <div className="metric-number" style={{ color: '#f59e0b' }}>
+                    {schemaData.fields?.filter(f => !f.obrigatorio).length || 0}
+                  </div>
+                </div>
+              </div>
+
+              {/* Tabela do Raio-X */}
+              <div className="table-container" style={{ marginBottom: '1.5rem' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Campo</th>
+                      <th>Tipos BSON</th>
+                      <th>Frequência / Presença</th>
+                      <th>Status de Contrato</th>
+                      <th>Amostra de Dado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {schemaData.fields && schemaData.fields.length > 0 ? (
+                      schemaData.fields.map(f => (
+                        <tr key={f.campo}>
+                          <td>
+                            <code style={{ fontSize: '0.85rem', fontWeight: 600 }}>payload.{f.campo}</code>
+                          </td>
+                          <td>
+                            {f.tipos.map(t => (
+                              <span key={t} className={`type-badge type-${t}`}>
+                                {t}
+                              </span>
+                            ))}
+                          </td>
+                          <td style={{ minWidth: '160px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                              <span>{f.frequencia_pct}%</span>
+                              <span>{f.ocorrencias}/{schemaData.total_records} docs</span>
+                            </div>
+                            <div className="progress-bar-bg">
+                              <div 
+                                className="progress-bar-fill" 
+                                style={{ 
+                                  width: `${f.frequencia_pct}%`,
+                                  background: f.obrigatorio ? '#10b981' : '#f59e0b'
+                                }}
+                              />
+                            </div>
+                          </td>
+                          <td>
+                            {f.obrigatorio ? (
+                              <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }}>
+                                Obrigatório (100%)
+                              </span>
+                            ) : (
+                              <span className="badge" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24' }}>
+                                Evolutivo / Opcional
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                            {typeof f.amostra === 'object' && f.amostra !== null 
+                              ? JSON.stringify(f.amostra) 
+                              : String(f.amostra ?? '—')}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-dim)', padding: '2rem' }}>
+                          Nenhum documento encontrado para analisar o schema desta fonte.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pipeline usado */}
+              <div>
+                <h4 style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
+                  💻 Pipeline de Agregação executado no Atlas:
+                </h4>
+                <div className="code-box">
+                  {`db.api_records.aggregate(${JSON.stringify(schemaData.pipeline_usado, null, 2)})`}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -819,6 +1310,11 @@ function DocumentCard({ record, meta, Icon }) {
               <strong style={{ fontSize: '0.9rem', color: '#fff' }}>
                 {record.external_id || 'sem ID externo'}
               </strong>
+              {record.score !== undefined && (
+                <span className="badge" style={{ background: 'rgba(99, 102, 241, 0.2)', color: '#818cf8', fontSize: '0.68rem', padding: '0.1rem 0.4rem' }}>
+                  Score: {Number(record.score).toFixed(2)}
+                </span>
+              )}
               <span style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
                 • {new Date(record.received_at).toLocaleTimeString('pt-BR')}
               </span>

@@ -36,7 +36,7 @@ flowchart LR
     B -->|"insert_one"| C[("MongoDB Atlas<br/>api_records")]
     D["api_sources<br/>catálogo"] -.->|"valida fonte"| B
     C -->|"find / aggregate"| E["Consultas<br/>filtros e extração"]
-    E --> F["Interface Streamlit"]
+    E --> F["Interface Web<br/>React + Vite"]
 ```
 
 ## Banco de dados
@@ -51,9 +51,9 @@ flowchart LR
 **Dentro do escopo**
 - Catálogo de fontes (`api_sources`).
 - Recebimento e armazenamento de payloads heterogêneos (`api_records`).
-- Índices para consulta por fonte/data e para evitar registros duplicados.
-- Consultas e agregações sobre campos internos do payload.
-- Interface de demonstração (Streamlit) e API (FastAPI).
+- Índices para consulta por fonte/data, unicidade parcial e busca textual global.
+- Consultas, inferência de schema e agregações sobre campos internos do payload.
+- Interface web moderna (React + Vite) e API REST (FastAPI).
 
 **Fora do escopo (evolução futura)**
 - Conexão automática com as APIs reais (webhooks/polling).

@@ -118,6 +118,7 @@ cp .env.example .env
 
 Com o terminal na raiz do projeto e o `.venv` ativado:
 ```bash
+cd backend
 uvicorn main:app --reload --port 8000
 ```
 * **Status da API:** http://localhost:8000/
@@ -146,11 +147,14 @@ npm run dev
 | POST   | `/sources`                            | Cadastra uma nova fonte                          |
 | PATCH  | `/sources/{id}?active=false`          | Ativa/desativa uma fonte                         |
 | GET    | `/sources/{id}/fields`                | Descobre os campos que a fonte envia no payload  |
+| GET    | `/sources/{id}/schema`                | **Raio-X de Schema:** tipos BSON e frequências   |
 | POST   | `/records/{source_id}`                | **Recebe um payload de qualquer formato**        |
 | GET    | `/records?source_id=stripe`           | Lista os documentos brutos                       |
+| GET    | `/records/search?q=Uberlândia`        | **Busca Textual Global** no payload (`$text`)    |
 | GET    | `/records/{id}/filter?field=status&value=paid` | Filtra por campo interno do payload     |
 | GET    | `/records/{id}/extract?fields=customer&fields=amount` | **Query Mágica** (payload → colunas) |
 | GET    | `/stats`                              | Registros por fonte (`$group` + `$lookup`)       |
+| GET    | `/analytics/dashboard`                | **Analytics Multidimensional:** `$facet` + `$bucketAuto` |
 
 Exemplo de recebimento:
 ```bash
@@ -165,10 +169,30 @@ curl -X POST http://localhost:8000/records/stripe \
 
 1. **Visão geral** → mostrar as fontes em `api_sources` e a contagem por fonte.
 2. **Documentos brutos** → abrir um registro da Stripe e um do ERP: formatos diferentes, mesma coleção.
-3. **Simular API** → enviar um payload novo, ou até inventar campos novos: o banco aceita sem migração.
-4. Reenviar o **mesmo `external_id`** → o índice único parcial bloqueia a duplicata (HTTP 409).
-5. **Cadastrar nova fonte** na barra lateral → enviar dados dela sem criar coleção nova.
+3. **Busca Textual Global ($text)** → buscar palavras como *"Uberlândia"*, *"Python"* ou *"CAF-500G"* sem saber em qual campo estão; o MongoDB ranqueia por relevância (`textScore`).
+4. **Simular API** → enviar um payload novo, ou até inventar campos novos: o banco aceita sem migração.
+5. Reenviar o **mesmo `external_id`** → o índice único parcial bloqueia a duplicata (HTTP 409).
 6. **Query Mágica** → escolher campos e ver o payload virar tabela, com o pipeline exibido.
+7. **Raio-X de Schema (Pipeline Estrutural)** → inspecionar campos, frequência de ocorrência e tipos BSON inferidos via `$objectToArray` e `$type`, demonstrando a evolução viva do contrato de dados.
+8. **Dashboard Multidimensional (Pipeline Analítico com `$facet`)** → na Visão Geral, ver métricas consolidadas, histograma probabilístico via `$bucketAuto`, distribuição por status via `$sortByCount` e timeline via `$dateToString`.
+
+---
+
+## ⚡ Os 2 Pipelines de Agregação Avançados (Requisito da Disciplina)
+
+O sistema implementa dois pipelines com operadores e propósitos completamente diferentes:
+
+1. **Pipeline 1: Raio-X Estrutural & Inferência de Schema (Engenharia de Dados)**
+   * **Operadores:** `$match` $\to$ `$project ($objectToArray)` $\to$ `$unwind` $\to$ `$group ($type, $addToSet)` $\to$ `$sort`.
+   * **Objetivo:** Inspecionar e auditar a anatomia viva do documento BSON e a tipagem física dos campos heterogêneos sem schema prévio.
+
+2. **Pipeline 2: Dashboard Analítico Multidimensional (Business Intelligence & BI)**
+   * **Operadores:** `$match` $\to$ `$facet` com sub-ramos paralelos:
+     * *Histograma de Valores:* `$addFields` $\to$ `$bucketAuto`
+     * *Distribuição de Status:* `$project` $\to$ `$sortByCount`
+     * *Série Temporal:* `$dateToString` $\to$ `$group` $\to$ `$sort`
+     * *KPIs Globais:* `$group` $\to$ `$cond` $\to$ `$min` $\to$ `$max` $\to$ `$size`
+   * **Objetivo:** Processamento analítico em lote que bifurca a coleção em 4 visões estatísticas simultâneas em uma única requisição.
 
 ## 🧭 Fora do escopo (evolução futura)
 Conexão automática com APIs reais (webhooks), autenticação das integrações,

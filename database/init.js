@@ -44,4 +44,10 @@ dbHub.api_records.createIndex(
   }
 );
 
+// Busca textual universal em todos os campos do payload (Wildcard Text Index)
+dbHub.api_records.createIndex(
+  { "payload.$**": "text" },
+  { name: "idx_text_payload", default_language: "none" }
+);
+
 print("Estrutura do banco preparada!");

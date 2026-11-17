@@ -11,7 +11,7 @@ Uso:
 import argparse
 from datetime import datetime, timezone
 
-from pymongo import ASCENDING, DESCENDING
+from pymongo import ASCENDING, DESCENDING, TEXT
 
 from db import DB_NAME, api_records, api_sources, db
 
@@ -124,6 +124,11 @@ def init() -> None:
       name="uniq_source_external",
       unique=True,
       partialFilterExpression={"external_id": {"$type": "string"}},
+  )
+  api_records.create_index(
+      [("payload.$**", TEXT)],
+      name="idx_text_payload",
+      default_language="none",
   )
   print("Índices criados.")
 
