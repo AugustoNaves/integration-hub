@@ -12,13 +12,27 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from pymongo import DESCENDING
 from pymongo.errors import DuplicateKeyError
 
 from db import api_records, api_sources, client
+from redis_client import (
+    DEMO_USERS,
+    bf_check_only,
+    check_and_add_external_id,
+    delete_session,
+    get_bf_stats,
+    get_cms_stats,
+    get_hll_stats,
+    get_session,
+    init_probabilistic_structures,
+    login_user,
+    record_active_user,
+    record_route_hit,
+)
 
 app = FastAPI(
     title="Integration Hub",
@@ -35,6 +49,60 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+def startup_event():
+  """Inicializa Redis (estruturas probabilísticas) e popula Bloom Filter com IDs existentes."""
+  init_probabilistic_structures()
+  try:
+    cursor = api_records.find(
+        {"external_id": {"$exists": True, "$ne": None}}, {"external_id": 1}
+    )
+    count = 0
+    for doc in cursor:
+      ext_id = doc.get("external_id")
+      if ext_id:
+        check_and_add_external_id(str(ext_id))
+        count += 1
+    print(f"[Redis BF] Sincronizados {count} IDs do MongoDB para o Bloom Filter.")
+  except Exception as e:
+    print(f"[Redis BF] Aviso ao sincronizar com MongoDB: {e}")
+
+
+@app.middleware("http")
+async def track_metrics_middleware(request: Request, call_next):
+  """Intercepta requisições HTTP para alimentar as estruturas probabilísticas em tempo real:
+
+  - Count-Min Sketch: registra hits por rota (sem subestimar).
+  - HyperLogLog: registra acessos únicos por ID de usuário (ou IP se anônimo).
+  """
+  path = request.url.path
+  if not path.startswith("/docs") and not path.startswith("/openapi") and path != "/favicon.ico":
+    try:
+      record_route_hit(path)
+    except Exception:
+      pass
+
+  auth_header = request.headers.get("Authorization")
+  if auth_header and auth_header.startswith("Bearer "):
+    token = auth_header.split(" ")[1]
+    try:
+      session = get_session(token)
+      if session:
+        record_active_user(session["user_id"])
+    except Exception:
+      pass
+  else:
+    client_ip = request.client.host if request.client else "anonymous"
+    try:
+      record_active_user(f"anon:{client_ip}")
+    except Exception:
+      pass
+
+  response = await call_next(request)
+  return response
+
+
 # Nome de campo seguro para usar em "payload.<campo>" (evita operadores "$")
 FIELD_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)*$")
 
@@ -42,6 +110,15 @@ FIELD_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)*$")
 # ---------------------------------------------------------------------
 # Modelos
 # ---------------------------------------------------------------------
+class LoginIn(BaseModel):
+  username: str = Field(..., examples=["augusto"])
+  password: str = Field(..., examples=["123"])
+
+
+class BFCheckIn(BaseModel):
+  external_id: str = Field(..., examples=["evt_12345"])
+
+
 class SourceIn(BaseModel):
   source_id: str = Field(..., pattern=r"^[a-z0-9_]+$", examples=["crm"])
   name: str = Field(..., examples=["CRM"])
@@ -218,7 +295,11 @@ def inspect_schema(source_id: str):
 # ---------------------------------------------------------------------
 @app.post("/records/{source_id}", status_code=201, tags=["Registros"])
 def receive_record(source_id: str, record: RecordIn):
-  """Recebe um payload de qualquer formato e armazena o documento original."""
+  """Recebe um payload de qualquer formato e armazena o documento original.
+
+  Utiliza o Bloom Filter (Redis) para checagem rápida de duplicidade em O(1)
+  antes e durante a persistência no MongoDB Atlas.
+  """
   get_active_source(source_id)
 
   doc: Dict[str, Any] = {
@@ -226,17 +307,32 @@ def receive_record(source_id: str, record: RecordIn):
       "payload": record.payload,
       "received_at": datetime.now(timezone.utc),
   }
+
+  seen_in_bf = False
   if record.external_id:
     doc["external_id"] = record.external_id
+    seen_in_bf = bf_check_only(record.external_id)
 
   try:
     result = api_records.insert_one(doc)
+    # Se inseriu no Mongo com sucesso, garante que o Bloom Filter o conhece
+    if record.external_id:
+      check_and_add_external_id(record.external_id)
   except DuplicateKeyError:
-    raise HTTPException(
-        409,
-        f"Registro '{record.external_id}' da fonte '{source_id}' já foi recebido.",
-    )
-  return {"mensagem": "Registro armazenado!", "id": str(result.inserted_id)}
+    msg = f"Registro '{record.external_id}' da fonte '{source_id}' já foi recebido."
+    if seen_in_bf:
+      msg += " (Detectado previamente pelo Bloom Filter - Zero Falso Negativo)."
+    raise HTTPException(409, msg)
+
+  return {
+      "mensagem": "Registro armazenado!",
+      "id": str(result.inserted_id),
+      "bloom_filter": (
+          "Novo external_id indexado no Bloom Filter"
+          if record.external_id
+          else "Sem external_id"
+      ),
+  }
 
 
 @app.get("/records", tags=["Registros"])
@@ -510,4 +606,93 @@ def analytics_dashboard(source_id: Optional[str] = None):
       "timeline": serialize(facet_result.get("timeline", [])),
       "faixas_valores": serialize(facet_result.get("faixas_valores", [])),
       "status_distribuicao": serialize(facet_result.get("status_distribuicao", [])),
+  }
+
+
+# ---------------------------------------------------------------------
+# Autenticação e Sessão de Usuário com Cache Redis (com TTL)
+# ---------------------------------------------------------------------
+@app.post("/auth/login", tags=["Autenticação (Redis)"])
+def login(creds: LoginIn):
+  """Autentica o usuário e cria uma sessão no Redis com expiração automática (TTL)."""
+  result = login_user(creds.username, creds.password)
+  if not result:
+    raise HTTPException(401, "Usuário ou senha incorretos. Use: augusto/123, pedro/123 ou professor/123")
+  return result
+
+
+@app.post("/auth/logout", tags=["Autenticação (Redis)"])
+def logout(authorization: Optional[str] = Header(None)):
+  """Encerra a sessão removendo a chave do Redis em O(1)."""
+  if not authorization or not authorization.startswith("Bearer "):
+    raise HTTPException(400, "Header Authorization Bearer <token> é obrigatório.")
+  token = authorization.split(" ")[1]
+  success = delete_session(token)
+  return {"mensagem": "Sessão encerrada com sucesso.", "deleted": success}
+
+
+@app.get("/auth/me", tags=["Autenticação (Redis)"])
+def me(authorization: Optional[str] = Header(None)):
+  """Valida a sessão ativa do usuário diretamente na memória do Redis."""
+  if not authorization or not authorization.startswith("Bearer "):
+    raise HTTPException(401, "Header Authorization Bearer <token> ausente.")
+  token = authorization.split(" ")[1]
+  user_session = get_session(token)
+  if not user_session:
+    raise HTTPException(401, "Sessão inválida ou expirada no Redis.")
+  return user_session
+
+
+@app.get("/auth/demo-users", tags=["Autenticação (Redis)"])
+def get_demo_users():
+  """Retorna usuários disponíveis para teste no frontend."""
+  return [
+      {"username": k, "name": v["name"], "role": v["role"], "email": v["email"]}
+      for k, v in DEMO_USERS.items()
+  ]
+
+
+# ---------------------------------------------------------------------
+# Estatísticas do Sistema com Estruturas Probabilísticas (Redis)
+# ---------------------------------------------------------------------
+@app.get("/analytics/redis-stats", tags=["Estatísticas Probabilísticas (Redis)"])
+def get_redis_statistics():
+  """Retorna métricas em tempo real calculadas pelas estruturas probabilísticas:
+
+  - HyperLogLog: Estimativa de cardinalidade de usuários ativos (12 KB fixos).
+  - Count-Min Sketch: Frequência estimada de chamadas por endpoint (sem subestimação).
+  - Bloom Filter: Verificação de existência e capacidade de IDs de registros.
+  """
+  return {
+      "timestamp": datetime.now(timezone.utc).isoformat(),
+      "hyperloglog": get_hll_stats(),
+      "count_min_sketch": get_cms_stats(),
+      "bloom_filter": get_bf_stats(),
+  }
+
+
+@app.post("/analytics/bloom-filter/check", tags=["Estatísticas Probabilísticas (Redis)"])
+def check_id_in_bloom_filter(item: BFCheckIn):
+  """Testa se um external_id específico já foi visto segundo o Bloom Filter."""
+  exists = bf_check_only(item.external_id)
+  return {
+      "external_id": item.external_id,
+      "exists_in_bloom_filter": exists,
+      "propriedade": (
+          "Sem falsos negativos: se false, GARANTIDO que o ID nunca foi registrado."
+          if not exists
+          else "Pode existir no banco ou ser falso positivo controlado (~1%)."
+      ),
+  }
+
+
+@app.post("/analytics/bloom-filter/add", tags=["Estatísticas Probabilísticas (Redis)"])
+def add_id_to_bloom_filter(item: BFCheckIn):
+  """Permite injetar manualmente um external_id no Bloom Filter para experimentação."""
+  seen, added = check_and_add_external_id(item.external_id)
+  return {
+      "external_id": item.external_id,
+      "previously_seen": seen,
+      "added_now": added,
+      "mensagem": "ID processado no Bloom Filter com sucesso.",
   }

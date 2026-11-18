@@ -154,6 +154,15 @@ def seed() -> None:
       f"Seed concluído: {api_sources.count_documents({})} fontes,"
       f" {api_records.count_documents({})} registros."
   )
+  try:
+    from redis_client import check_and_add_external_id, init_probabilistic_structures
+    init_probabilistic_structures()
+    for rec in RECORDS:
+      if rec.get("external_id"):
+        check_and_add_external_id(rec["external_id"])
+    print("[Redis] Registros de exemplo adicionados ao Bloom Filter!")
+  except Exception as e:
+    print(f"[Redis] Aviso ao atualizar Bloom Filter: {e}")
 
 
 def main() -> None:

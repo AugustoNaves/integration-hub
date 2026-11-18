@@ -21,7 +21,15 @@ import {
   FileSearch,
   Sparkles,
   Tag,
-  X
+  X,
+  Zap,
+  ShieldCheck,
+  Activity,
+  Key,
+  LogIn,
+  LogOut,
+  User,
+  Cpu
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
@@ -151,6 +159,175 @@ export default function App() {
   const [facetSource, setFacetSource] = useState('all');
   const [facetLoading, setFacetLoading] = useState(false);
   const [showFacetCode, setShowFacetCode] = useState(false);
+
+  // State: Autenticação & Redis
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('hub_user_session');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [demoUsers, setDemoUsers] = useState([]);
+  const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [loginUsername, setLoginUsername] = useState('augusto');
+  const [loginPassword, setLoginPassword] = useState('123');
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState('');
+
+  // State: Estatísticas Probabilísticas (Redis)
+  const [redisStats, setRedisStats] = useState(null);
+  const [redisLoading, setRedisLoading] = useState(false);
+  const [bfInput, setBfInput] = useState('evt_12345');
+  const [bfResult, setBfResult] = useState(null);
+  const [bfLoading, setBfLoading] = useState(false);
+  const [bfNotice, setBfNotice] = useState('');
+  const [simTrafficLoading, setSimTrafficLoading] = useState(false);
+
+  const authHeaders = () => {
+    return currentUser?.token ? { Authorization: `Bearer ${currentUser.token}` } : {};
+  };
+
+  const fetchDemoUsers = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/demo-users`);
+      if (res.ok) {
+        const data = await res.json();
+        setDemoUsers(data);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchRedisStats = async () => {
+    try {
+      setRedisLoading(true);
+      const res = await fetch(`${API_BASE}/analytics/redis-stats`, {
+        headers: authHeaders()
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRedisStats(data);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setRedisLoading(false);
+    }
+  };
+
+  const handleLogin = async (username, password) => {
+    try {
+      setLoginLoading(true);
+      setLoginError('');
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Falha ao autenticar');
+      }
+      const data = await res.json();
+      setCurrentUser(data);
+      localStorage.setItem('hub_user_session', JSON.stringify(data));
+      setLoginModalOpen(false);
+      fetchRedisStats();
+    } catch (err) {
+      setLoginError(err.message);
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (currentUser?.token) {
+      try {
+        await fetch(`${API_BASE}/auth/logout`, {
+          method: 'POST',
+          headers: authHeaders()
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    setCurrentUser(null);
+    localStorage.removeItem('hub_user_session');
+    fetchRedisStats();
+  };
+
+  const checkBloomFilter = async (id) => {
+    if (!id) return;
+    try {
+      setBfLoading(true);
+      setBfNotice('');
+      const res = await fetch(`${API_BASE}/analytics/bloom-filter/check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ external_id: id })
+      });
+      const data = await res.json();
+      setBfResult(data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setBfLoading(false);
+    }
+  };
+
+  const addToBloomFilter = async (id) => {
+    if (!id) return;
+    try {
+      setBfLoading(true);
+      const res = await fetch(`${API_BASE}/analytics/bloom-filter/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ external_id: id })
+      });
+      const data = await res.json();
+      setBfNotice(`ID '${id}' registrado no Bloom Filter!`);
+      setBfResult({
+        external_id: id,
+        exists_in_bloom_filter: true,
+        propriedade: 'Pode existir no banco ou ser falso positivo controlado (~1%).'
+      });
+      fetchRedisStats();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setBfLoading(false);
+    }
+  };
+
+  const simulateHllTraffic = async () => {
+    try {
+      setSimTrafficLoading(true);
+      const batch = Array.from({ length: 10 }, () => `sim_user_${Math.floor(Math.random() * 999999)}`);
+      await Promise.all(
+        batch.map(u => 
+          fetch(`${API_BASE}/sources`, { headers: { 'X-Simulated-User': u } })
+        )
+      );
+      await fetchRedisStats();
+    } finally {
+      setSimTrafficLoading(false);
+    }
+  };
+
+  const simulateCmsTraffic = async (route) => {
+    try {
+      setSimTrafficLoading(true);
+      await Promise.all(
+        Array.from({ length: 5 }).map(() => fetch(`${API_BASE}${route}`))
+      );
+      await fetchRedisStats();
+    } finally {
+      setSimTrafficLoading(false);
+    }
+  };
 
   // Carrega dados iniciais
   const refreshData = async () => {
@@ -349,8 +526,16 @@ export default function App() {
   };
 
   useEffect(() => {
+    fetchDemoUsers();
+    fetchRedisStats();
+  }, []);
+
+  useEffect(() => {
     if (activeTab === 'schema' && schemaSource) {
       fetchSchema(schemaSource);
+    }
+    if (activeTab === 'redis') {
+      fetchRedisStats();
     }
   }, [activeTab, schemaSource]);
 
@@ -366,16 +551,50 @@ export default function App() {
           </div>
           <div className="title-group">
             <h1>Hub de Integração Universal</h1>
-            <p>Centralizando dados heterogêneos no MongoDB Atlas (BSON flexível)</p>
+            <p>MongoDB Atlas (BSON flexível) + Redis Stack (Cache & Métricas Probabilísticas)</p>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
           <div className="status-pill">
             <span className="status-dot"></span>
             <span>MongoDB Atlas: {health.status === 'ok' ? 'Conectado' : 'Verificando...'}</span>
           </div>
-          <button className="btn btn-outline" onClick={refreshData} disabled={loading} title="Atualizar dados">
+
+          <div className="status-pill" style={{ background: 'rgba(244, 63, 94, 0.12)', borderColor: 'rgba(244, 63, 94, 0.3)', color: '#f43f5e' }}>
+            <span className="status-dot" style={{ backgroundColor: '#f43f5e', boxShadow: '0 0 8px #f43f5e' }}></span>
+            <span>Redis Stack: Ativo</span>
+          </div>
+
+          {currentUser ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', background: 'var(--bg-secondary)', padding: '0.35rem 0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+              <User size={15} color="#818cf8" />
+              <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#fff' }}>{currentUser.user.name}</span>
+                <span style={{ fontSize: '0.65rem', color: '#818cf8', textTransform: 'uppercase' }}>{currentUser.user.role}</span>
+              </div>
+              <button 
+                onClick={handleLogout} 
+                className="btn btn-outline" 
+                style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', marginLeft: '0.2rem', borderColor: 'rgba(244, 63, 94, 0.3)', color: '#f43f5e' }}
+                title="Encerrar sessão no Redis"
+              >
+                <LogOut size={13} />
+                Sair
+              </button>
+            </div>
+          ) : (
+            <button 
+              className="btn btn-primary" 
+              onClick={() => setLoginModalOpen(true)}
+              style={{ background: 'linear-gradient(135deg, #f43f5e, #e11d48)', border: 'none', display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.45rem 0.85rem' }}
+            >
+              <LogIn size={15} />
+              Login (Cache Redis)
+            </button>
+          )}
+
+          <button className="btn btn-outline" onClick={() => { refreshData(); fetchRedisStats(); }} disabled={loading} title="Atualizar dados">
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             Atualizar
           </button>
@@ -418,6 +637,14 @@ export default function App() {
         >
           <Code2 size={18} />
           5. Raio-X do Schema (BSON)
+        </button>
+        <button 
+          className={`tab-btn ${activeTab === 'redis' ? 'active' : ''}`}
+          onClick={() => setActiveTab('redis')}
+          style={activeTab === 'redis' ? { borderColor: '#f43f5e', color: '#f43f5e', background: 'rgba(244, 63, 94, 0.1)' } : {}}
+        >
+          <Zap size={18} color="#f43f5e" />
+          6. Redis & Probabilístico
         </button>
       </nav>
 
@@ -1267,6 +1494,418 @@ export default function App() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB 6: REDIS & ESTRUTURAS DE DADOS PROBABILÍSTICAS */}
+      {/* ========================================================= */}
+      {activeTab === 'redis' && (
+        <div>
+          {/* Header do Redis */}
+          <div className="callout" style={{ borderLeftColor: '#f43f5e', background: 'rgba(244, 63, 94, 0.05)', marginBottom: '1.5rem' }}>
+            <Zap size={26} color="#f43f5e" className="callout-icon" />
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <strong style={{ color: '#fff', fontSize: '1.05rem' }}>
+                  Redis Stack: Cache de Sessões & Estruturas de Dados Probabilísticas
+                </strong>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <a 
+                    href="http://localhost:8001" 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="btn btn-outline" 
+                    style={{ fontSize: '0.78rem', padding: '0.3rem 0.65rem', borderColor: 'rgba(244, 63, 94, 0.4)', color: '#f43f5e' }}
+                  >
+                    <ExternalLink size={14} />
+                    Abrir RedisInsight (GUI)
+                  </a>
+                  <button 
+                    onClick={fetchRedisStats} 
+                    className="btn btn-outline" 
+                    style={{ fontSize: '0.78rem', padding: '0.3rem 0.65rem' }}
+                    disabled={redisLoading}
+                  >
+                    <RefreshCw size={14} className={redisLoading ? 'animate-spin' : ''} />
+                    Atualizar Métricas
+                  </button>
+                </div>
+              </div>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.86rem', marginTop: '0.3rem' }}>
+                O Redis opera 100% em memória RAM. Aqui resolvemos dois gargalos comuns: autenticação ultra-rápida via <strong>cache com TTL</strong> e estatísticas de tráfego de alto volume via <strong>estruturas probabilísticas</strong> (economizando até 99% de memória).
+              </p>
+            </div>
+          </div>
+
+          {/* Grid Principal: 2 Colunas */}
+          <div className="grid-2" style={{ gap: '1.5rem', marginBottom: '1.5rem' }}>
+            
+            {/* 1. CACHE DE SESSÃO / LOGIN (TTL) */}
+            <div className="card">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '1rem' }}>
+                <div className="card-icon-wrap" style={{ background: 'rgba(244, 63, 94, 0.15)', color: '#f43f5e' }}>
+                  <Key size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1rem', color: '#fff', fontWeight: 600 }}>1. Cache de Login de Usuário (TTL)</h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Armazenamento Chave-Valor em memória RAM com expiração automática</p>
+                </div>
+              </div>
+
+              {currentUser ? (
+                <div style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid rgba(16, 185, 129, 0.3)', marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+                    <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }}>
+                      Sessão Ativa no Redis
+                    </span>
+                    <button 
+                      onClick={handleLogout} 
+                      className="btn btn-outline" 
+                      style={{ padding: '0.2rem 0.6rem', fontSize: '0.75rem', borderColor: 'rgba(244, 63, 94, 0.3)', color: '#f43f5e' }}
+                    >
+                      <LogOut size={13} />
+                      Encerrar Sessão (DEL)
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: '#fff', marginBottom: '0.25rem' }}>
+                    <strong>{currentUser.user.name}</strong> ({currentUser.user.email})
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                    Nível de Acesso: <span style={{ color: 'var(--accent-indigo)', fontWeight: 600 }}>{currentUser.user.role.toUpperCase()}</span>
+                  </div>
+                  <div style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', background: 'var(--bg-primary)', padding: '0.5rem', borderRadius: 'var(--radius-sm)', color: '#94a3b8', wordBreak: 'break-all' }}>
+                    Chave Redis: <code>session:{currentUser.token}</code> (TTL: 7200s)
+                  </div>
+                </div>
+              ) : (
+                <div style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', marginBottom: '1rem', textAlign: 'center' }}>
+                  <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+                    Nenhum usuário logado no momento. Faça login para gerar uma sessão com TTL no Redis:
+                  </p>
+                  <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button 
+                      onClick={() => handleLogin('augusto', '123')} 
+                      className="btn btn-primary" 
+                      style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }}
+                      disabled={loginLoading}
+                    >
+                      Logar como Augusto (Admin)
+                    </button>
+                    <button 
+                      onClick={() => handleLogin('pedro', '123')} 
+                      className="btn btn-outline" 
+                      style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }}
+                      disabled={loginLoading}
+                    >
+                      Logar como Pedro (Analyst)
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                <strong>Comando executado no Redis:</strong>
+                <div className="code-box" style={{ marginTop: '0.3rem', fontSize: '0.75rem' }}>
+                  {currentUser 
+                    ? `SET session:${currentUser.token} '${JSON.stringify(currentUser.user)}' EX 7200\nGET session:${currentUser.token}` 
+                    : `SET session:<uuid> '{"user_id": "...", "role": "admin"}' EX 7200\nDEL session:<uuid>  # no logout instantâneo`}
+                </div>
+              </div>
+            </div>
+
+            {/* 2. HYPERLOGLOG (HLL) */}
+            <div className="card">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '1rem' }}>
+                <div className="card-icon-wrap" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6' }}>
+                  <Users size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1rem', color: '#fff', fontWeight: 600 }}>2. HyperLogLog (Cardinalidade de Usuários)</h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Contagem de elementos únicos consumindo apenas ~12 KB de RAM</p>
+                </div>
+              </div>
+
+              <div className="grid-2" style={{ gap: '0.75rem', marginBottom: '1rem' }}>
+                <div style={{ background: 'var(--bg-secondary)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                  <span className="metric-label" style={{ fontSize: '0.75rem' }}>Usuários Únicos Hoje (DAU)</span>
+                  <div className="metric-number" style={{ color: '#3b82f6', fontSize: '1.8rem', marginTop: '0.2rem' }}>
+                    {redisStats?.hyperloglog?.daily_unique_users_estimate ?? '—'}
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>Chave: hll:active_users:{redisStats?.hyperloglog?.date || 'hoje'}</span>
+                </div>
+                <div style={{ background: 'var(--bg-secondary)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                  <span className="metric-label" style={{ fontSize: '0.75rem' }}>Total Histórico Estimado</span>
+                  <div className="metric-number" style={{ color: '#818cf8', fontSize: '1.8rem', marginTop: '0.2rem' }}>
+                    {redisStats?.hyperloglog?.total_unique_users_estimate ?? '—'}
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>Erro padrão: ~0.81% (fixo)</span>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  Memória consumida: <strong>~12 KB</strong> (independente de ter 10 ou 10 milhões de usuários)
+                </span>
+                <button 
+                  onClick={simulateHllTraffic} 
+                  className="btn btn-outline" 
+                  style={{ fontSize: '0.75rem', padding: '0.25rem 0.65rem' }}
+                  disabled={simTrafficLoading}
+                >
+                  <Plus size={13} />
+                  Simular 10 Novos Usuários (PFADD)
+                </button>
+              </div>
+
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                <strong>Comandos executados no Redis:</strong>
+                <div className="code-box" style={{ marginTop: '0.3rem', fontSize: '0.75rem' }}>
+                  PFADD hll:active_users:2026-11-17 user_123 user_456{'\n'}
+                  PFCOUNT hll:active_users:2026-11-17  # Retorna: {redisStats?.hyperloglog?.daily_unique_users_estimate ?? 1}
+                </div>
+              </div>
+            </div>
+
+            {/* 3. COUNT-MIN SKETCH (CMS) */}
+            <div className="card">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '1rem' }}>
+                <div className="card-icon-wrap" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#10b981' }}>
+                  <Activity size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1rem', color: '#fff', fontWeight: 600 }}>3. Count-Min Sketch (Frequência de Requisições)</h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Contador de alta frequência sem subestimar (Heavy Hitters)</p>
+                </div>
+              </div>
+
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+                Cada chamada aos endpoints da API é registrada automaticamente no Count-Min Sketch via middleware HTTP:
+              </p>
+
+              <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', overflow: 'hidden', marginBottom: '0.75rem' }}>
+                {redisStats?.count_min_sketch?.routes?.length > 0 ? (
+                  <table className="data-table" style={{ margin: 0 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ fontSize: '0.75rem' }}>Endpoint / Rota</th>
+                        <th style={{ fontSize: '0.75rem', textAlign: 'right' }}>Hits Estimados (CMS)</th>
+                        <th style={{ fontSize: '0.75rem', textAlign: 'right' }}>Ação Rápida</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {redisStats.count_min_sketch.routes.slice(0, 5).map((r, i) => (
+                        <tr key={i}>
+                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', color: '#fff' }}>
+                            {r.route}
+                          </td>
+                          <td style={{ textAlign: 'right', fontWeight: 700, color: '#10b981', fontSize: '0.85rem' }}>
+                            {r.estimated_hits}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button 
+                              onClick={() => simulateCmsTraffic(r.route)} 
+                              className="btn btn-outline" 
+                              style={{ padding: '0.15rem 0.45rem', fontSize: '0.7rem' }}
+                              title="Dispara 5 requisições para este endpoint"
+                            >
+                              +5 Hits
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.82rem' }}>
+                    Nenhuma rota registrada ainda no Count-Min Sketch.
+                  </div>
+                )}
+              </div>
+
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                <strong>Comandos executados no Redis:</strong>
+                <div className="code-box" style={{ marginTop: '0.3rem', fontSize: '0.75rem' }}>
+                  CMS.INCRBY cms:route_stats /records 1{'\n'}
+                  CMS.QUERY cms:route_stats /records /sources
+                </div>
+              </div>
+            </div>
+
+            {/* 4. BLOOM FILTER (BF) */}
+            <div className="card">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '1rem' }}>
+                <div className="card-icon-wrap" style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#a855f7' }}>
+                  <ShieldCheck size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1rem', color: '#fff', fontWeight: 600 }}>4. Bloom Filter (Filtro de Existência de Registros)</h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Idempotência ultra-rápida em O(1): zero falsos negativos</p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  value={bfInput} 
+                  onChange={e => setBfInput(e.target.value)}
+                  placeholder="Ex: evt_12345, order_1001..."
+                  style={{ flex: 1, fontSize: '0.85rem' }}
+                />
+                <button 
+                  onClick={() => checkBloomFilter(bfInput)} 
+                  className="btn btn-primary" 
+                  style={{ fontSize: '0.8rem', padding: '0.45rem 0.85rem', background: '#a855f7' }}
+                  disabled={bfLoading || !bfInput}
+                >
+                  <Search size={14} />
+                  Checar no BF
+                </button>
+                <button 
+                  onClick={() => addToBloomFilter(bfInput)} 
+                  className="btn btn-outline" 
+                  style={{ fontSize: '0.8rem', padding: '0.45rem 0.85rem', borderColor: '#a855f7', color: '#c084fc' }}
+                  disabled={bfLoading || !bfInput}
+                >
+                  <Plus size={14} />
+                  Inserir no BF
+                </button>
+              </div>
+
+              {bfNotice && (
+                <div style={{ padding: '0.45rem 0.75rem', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', borderRadius: 'var(--radius-sm)', fontSize: '0.78rem', marginBottom: '0.75rem' }}>
+                  {bfNotice}
+                </div>
+              )}
+
+              {bfResult && (
+                <div style={{ background: 'var(--bg-secondary)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', marginBottom: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem' }}>
+                    <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>ID Consultado:</span>
+                    <strong style={{ fontFamily: 'var(--font-mono)', color: '#fff', fontSize: '0.85rem' }}>{bfResult.external_id}</strong>
+                    {bfResult.exists_in_bloom_filter ? (
+                      <span className="badge" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24' }}>
+                        Pode Existir (Provável Positivo)
+                      </span>
+                    ) : (
+                      <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }}>
+                        Com Certeza NÃO Existe (Zero Falso Negativo)
+                      </span>
+                    )}
+                  </div>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+                    {bfResult.propriedade || bfResult.conclusao}
+                  </p>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.76rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                <span>Capacidade: <strong>{redisStats?.bloom_filter?.capacity ?? 50000}</strong></span>
+                <span>Itens Inseridos: <strong>{redisStats?.bloom_filter?.items_inserted ?? 0}</strong></span>
+                <span>Taxa de Erro: <strong>1.0%</strong></span>
+              </div>
+
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                <strong>Comandos executados no Redis:</strong>
+                <div className="code-box" style={{ marginTop: '0.3rem', fontSize: '0.75rem' }}>
+                  BF.EXISTS bf:seen_external_ids {bfInput || 'evt_12345'}{'\n'}
+                  BF.ADD bf:seen_external_ids {bfInput || 'evt_12345'}
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL DE LOGIN (DEMO) */}
+      {/* ========================================================= */}
+      {loginModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div className="card" style={{ maxWidth: 440, width: '90%', padding: '1.75rem', position: 'relative' }}>
+            <button 
+              onClick={() => setLoginModalOpen(false)} 
+              style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+            >
+              <X size={20} />
+            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '1.25rem' }}>
+              <div className="card-icon-wrap" style={{ background: 'rgba(244, 63, 94, 0.15)', color: '#f43f5e' }}>
+                <Key size={20} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1.1rem', color: '#fff' }}>Login & Sessão no Redis</h3>
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Gera um token com TTL armazenado em memória</p>
+              </div>
+            </div>
+
+            {loginError && (
+              <div style={{ padding: '0.5rem 0.75rem', background: 'rgba(244, 63, 94, 0.15)', color: '#f43f5e', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', marginBottom: '1rem' }}>
+                {loginError}
+              </div>
+            )}
+
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                Escolha um usuário demonstrativo para entrar:
+              </label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {demoUsers.map(u => (
+                  <button 
+                    key={u.username}
+                    onClick={() => handleLogin(u.username, '123')}
+                    className="btn btn-outline"
+                    style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.65rem 0.85rem' }}
+                    disabled={loginLoading}
+                  >
+                    <div style={{ textAlign: 'left' }}>
+                      <strong style={{ color: '#fff', fontSize: '0.85rem' }}>{u.name}</strong>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{u.email}</div>
+                    </div>
+                    <span className="badge" style={{ background: u.role === 'admin' ? 'rgba(244, 63, 94, 0.15)' : 'rgba(99, 102, 241, 0.15)', color: u.role === 'admin' ? '#f43f5e' : '#818cf8' }}>
+                      {u.role.toUpperCase()}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+              <label style={{ fontSize: '0.75rem', color: 'var(--text-dim)', display: 'block', marginBottom: '0.35rem' }}>
+                Ou informe credenciais personalizadas (senha padrão: <code>123</code>):
+              </label>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input 
+                  type="text" 
+                  className="input-field" 
+                  placeholder="Usuário" 
+                  value={loginUsername}
+                  onChange={e => setLoginUsername(e.target.value)}
+                  style={{ flex: 1, fontSize: '0.85rem' }}
+                />
+                <input 
+                  type="password" 
+                  className="input-field" 
+                  placeholder="Senha" 
+                  value={loginPassword}
+                  onChange={e => setLoginPassword(e.target.value)}
+                  style={{ width: 90, fontSize: '0.85rem' }}
+                />
+                <button 
+                  onClick={() => handleLogin(loginUsername, loginPassword)}
+                  className="btn btn-primary"
+                  style={{ background: '#f43f5e' }}
+                  disabled={loginLoading}
+                >
+                  Entrar
+                </button>
+              </div>
+            </div>
+
+          </div>
         </div>
       )}
     </div>

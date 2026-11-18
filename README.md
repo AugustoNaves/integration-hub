@@ -19,33 +19,34 @@ sem exigir que todos os sistemas externos usem o mesmo formato.
 
 ```
 .
+├── docker-compose.yml         # Container do Redis Stack (Redis + RedisBloom + RedisInsight)
 ├── README.md
 ├── docs/
 │   ├── system-description.md      # Problema, objetivo e funcionalidade principal
 │   └── database-architecture.md   # Banco, coleções, índices e comparação com JSONB
 ├── database/                      # Scripts para o mongosh
 │   ├── init.js                    # Cria banco, coleções e índices
-│   ├── seed.js                    # Insere fontes e documentos fictícios
-│   └── queries.js                 # 12 consultas de demonstração
-├── examples/                      # Payloads de exemplo em JSON de cada API
+│   └── seed.js                    # Insere fontes e documentos fictícios
 ├── frontend/                      # Aplicação Web Moderna (React + Vite + Tailwind/CSS)
 │   ├── src/
-│   │   ├── App.jsx                # Interface com as 4 abas e chamadas à API
+│   │   ├── App.jsx                # Interface com as 6 abas e chamadas às APIs
 │   │   └── index.css              # Estilos modernos e responsivos
 │   └── package.json
-├── db.py                          # Conexão com o Atlas (lê o .env)
-├── setup_db.py                    # Script Python para criar banco, índices e dados (sem mongosh)
-├── main.py                        # API REST FastAPI com suporte a CORS
-├── requirements.txt               # Dependências Python do backend
+├── backend/                       # API REST FastAPI + PyMongo + Redis
+│   ├── db.py                      # Conexão com o Atlas (lê o .env)
+│   ├── redis_client.py            # Cache de Sessão (TTL) + HLL, CMS e Bloom Filter
+│   ├── setup_db.py                # Script Python para criar banco, índices e dados (sem mongosh)
+│   └── main.py                    # API REST FastAPI com suporte a CORS e Middleware
+├── requirements.txt               # Dependências Python do backend (FastAPI, PyMongo, Redis)
 └── .env.example                   # Modelo de configuração das variáveis de ambiente
 ```
 
-## 🗄️ Banco de dados
+## 🗄️ Bancos de Dados NoSQL
 
-| Coleção       | Papel                                                                  |
-| ------------- | ---------------------------------------------------------------------- |
-| `api_sources` | Catálogo das fontes integradas (Stripe, RH App, CRM, ERP)              |
-| `api_records` | **Coleção principal.** Metadados fixos + `payload` com estrutura livre |
+| Banco | Papel / Modelo | Responsabilidade |
+| :--- | :--- | :--- |
+| **MongoDB Atlas** | Documental (BSON) | Ingestão e persistência flexível de payloads heterogêneos (`api_records`) e catálogo (`api_sources`) |
+| **Redis Stack** | Chave-Valor & Probabilístico (In-Memory) | Cache de login de usuário com TTL + Estruturas Probabilísticas (HyperLogLog, Count-Min Sketch e Bloom Filter) |
 
 Detalhes em [docs/database-architecture.md](docs/database-architecture.md).
 
@@ -90,7 +91,18 @@ API_URL=http://localhost:8000
 
 Como o banco no MongoDB Atlas já está pronto e populado, basta rodar o backend e o frontend:
 
-### 1. Clonar o repositório e configurar o ambiente Python
+### 1. Iniciar o Redis Stack (Docker)
+
+O Redis Stack roda em container Docker com o módulo `RedisBloom` e a interface visual `RedisInsight`:
+```bash
+docker compose up -d
+```
+* **Porta Redis:** `localhost:6379`
+* **Interface Visual (RedisInsight):** 👉 [http://localhost:8001](http://localhost:8001)
+
+---
+
+### 2. Configurar o ambiente Python e Dependências
 ```bash
 git clone https://github.com/AugustoNaves/integration-hub.git
 cd integration-hub
@@ -148,13 +160,20 @@ npm run dev
 | PATCH  | `/sources/{id}?active=false`          | Ativa/desativa uma fonte                         |
 | GET    | `/sources/{id}/fields`                | Descobre os campos que a fonte envia no payload  |
 | GET    | `/sources/{id}/schema`                | **Raio-X de Schema:** tipos BSON e frequências   |
-| POST   | `/records/{source_id}`                | **Recebe um payload de qualquer formato**        |
+| POST   | `/records/{source_id}`                | **Recebe payload heterogêneo + verificação Bloom Filter** |
 | GET    | `/records?source_id=stripe`           | Lista os documentos brutos                       |
 | GET    | `/records/search?q=Uberlândia`        | **Busca Textual Global** no payload (`$text`)    |
 | GET    | `/records/{id}/filter?field=status&value=paid` | Filtra por campo interno do payload     |
 | GET    | `/records/{id}/extract?fields=customer&fields=amount` | **Query Mágica** (payload → colunas) |
 | GET    | `/stats`                              | Registros por fonte (`$group` + `$lookup`)       |
 | GET    | `/analytics/dashboard`                | **Analytics Multidimensional:** `$facet` + `$bucketAuto` |
+| POST   | `/auth/login`                         | **Login & Criação de Sessão no Redis com TTL**   |
+| POST   | `/auth/logout`                        | **Logout imediato no Redis (DEL key em O(1))**   |
+| GET    | `/auth/me`                            | **Validação de Sessão ativa via Cache Redis**    |
+| GET    | `/auth/demo-users`                    | Lista usuários demonstrativos (Augusto, Pedro...) |
+| GET    | `/analytics/redis-stats`              | **Métricas em tempo real:** HLL + CMS + Bloom Filter |
+| POST   | `/analytics/bloom-filter/check`       | **Teste de Existência via Bloom Filter**         |
+| POST   | `/analytics/bloom-filter/add`         | Injeta ID para testes no Bloom Filter            |
 
 Exemplo de recebimento:
 ```bash
@@ -175,6 +194,7 @@ curl -X POST http://localhost:8000/records/stripe \
 6. **Query Mágica** → escolher campos e ver o payload virar tabela, com o pipeline exibido.
 7. **Raio-X de Schema (Pipeline Estrutural)** → inspecionar campos, frequência de ocorrência e tipos BSON inferidos via `$objectToArray` e `$type`, demonstrando a evolução viva do contrato de dados.
 8. **Dashboard Multidimensional (Pipeline Analítico com `$facet`)** → na Visão Geral, ver métricas consolidadas, histograma probabilístico via `$bucketAuto`, distribuição por status via `$sortByCount` e timeline via `$dateToString`.
+9. **Redis: Cache de Login & Estruturas Probabilísticas** → na Aba 6 (ou no header), fazer login para gerar a chave `session:<token>` com TTL em RAM; demonstrar o **HyperLogLog** (contagem de visitantes únicos com 12 KB fixos), o **Count-Min Sketch** (ranking de requisições por endpoint sem subestimação) e o **Bloom Filter** (detecção de IDs existentes com zero falso negativo). Mostrar as chaves no **RedisInsight** (`localhost:8001`).
 
 ---
 
